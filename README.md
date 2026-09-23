@@ -35,6 +35,8 @@ You stay in charge. Every clip opens in a review editor where you keep or pass, 
 | **Best quality** (default) | Transcribes the whole stream, reads facecam expressions, and checks on-screen text every 3 seconds. Also builds a complete searchable transcript. | Your normal choice. Slower, but it sees everything. |
 | **Smart scan** | Skips the full transcript and facecam expressions, and checks on-screen text every 6 seconds. Only the clips it picks get transcribed for captions. | A quick first pass on a long VOD. It can miss moments that are mostly talking. |
 
+> **Known issue in 0.1.0-beta.1:** Smart scan can return few or even zero clips on some videos, because without a transcript one of the judges rejects too much. Use **Best quality** until this is fixed in the next beta.
+
 ## Performance profiles
 
 You choose how much of your PC Recall may use, in onboarding or later in Settings. Scans always run at below-normal priority and use Windows' efficiency mode, so the app you're using stays in front.
@@ -78,7 +80,7 @@ The large models total about 12 GB. VRAM figures are estimates from model size. 
 
 Recall runs on machines without a supported GPU, and it tells you when it's in CPU mode. Every stage, including speech recognition and the judges, falls back to the CPU. AMD and Intel GPUs aren't accelerated yet, so they use CPU mode too.
 
-CPU-only mode is **very limited**. A full Best quality scan of a multi-hour stream can take many times longer than on an NVIDIA GPU, and the judges are especially slow. Use Smart scan, keep VODs short, and expect to leave it running. This path has not been tested on a machine without an NVIDIA GPU yet.
+CPU-only mode is **very limited**. A full Best quality scan of a multi-hour stream can take many times longer than on an NVIDIA GPU, and the judges are especially slow. Keep VODs short and expect to leave it running. (Smart scan would be faster, but see the known issue above.) This path has not been tested on a machine without an NVIDIA GPU yet.
 
 ## Install
 
