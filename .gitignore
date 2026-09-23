@@ -1,0 +1,38 @@
+# Local recordings, user state, models, and downloaded runtimes
+/data/
+/models/*
+!/models/notices/
+!/models/public-release/
+/vendor/
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+
+# Dependencies and generated builds
+node_modules/
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+/apps/api/build*/
+/apps/api/dist*/
+/apps/desktop/dist*/
+/apps/desktop/release*/
+/apps/desktop/build-generated/
+*.tsbuildinfo
+/publish/review/
+/model-install.lock
+
+# Local editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,13 @@
+Qwen3-ForcedAligner-0.6B ONNX
+Attribution: Qwen team, Alibaba Cloud; conversion distributed by valoomba
+Source: https://huggingface.co/valoomba/Qwen3-ForcedAligner-0.6B-ONNX/tree/261c9ed100c1b18a4a1fbc488e05625dc9a4ae5c
+License text: notices/Apache-2.0.txt
+Bundled file SHA-256 identities:
+asr/qwen3-aligner-0.6b/config.json 91f38394bd8117ad2ccbdfc0942d9c100a7482d4c43688674ef2a40fe64eb061
+asr/qwen3-aligner-0.6b/tokenizer.json e95e4127f5ea82f89695f00bb3c143eb7edd411e6096e27ff56319397f481e77
+asr/qwen3-aligner-0.6b/onnx/model.onnx 7b2bff8b7a8df4120b450673d65915488e5fd43e107f87f3816d9e2c830a9e8b
+asr/qwen3-aligner-0.6b/onnx/model.onnx_data 429a19b51f5f8a2504b5e573de87c8f74e2ad0be68e0ff7ba1e645663507bcdc
+Recall modifications: Selected files retain their matched upstream bytes. Local directory layout may differ.
+Base model: https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B/tree/c7cbfc2048c462b0d63a45797104fc9db3ad62b7
+Base publisher declares Apache-2.0. Standard license text supplied because the inspected base repository has no standalone LICENSE file.
+No endorsement by upstream creators is implied.

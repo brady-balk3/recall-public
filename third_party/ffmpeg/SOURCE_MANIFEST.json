@@ -1,0 +1,48 @@
+{
+  "project": "Recall FFmpeg source",
+  "status": "copyleft-sources-collected-pending-publication",
+  "binary_sha256": "aa6cdeec90cbc60dce4652d3b15213b49f104b2b9e64d41cc0d5268eb8b0f30f",
+  "ffmpeg_revision": "9d4ca21220bfd3f06fc8bfc90ddf0f6d0a484611",
+  "source_url": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/9d4ca21220bfd3f06fc8bfc90ddf0f6d0a484611",
+  "build_recipe_revision": "a1b5c414d3c53f5abf5baf73df9607cdf77bb46a",
+  "build_recipe_status": "Associated upstream recipe; exact binary correspondence not fully verified",
+  "files": [
+    {
+      "path": "ffmpeg-9d4ca21220bfd3f06fc8bfc90ddf0f6d0a484611.tar.gz",
+      "sha256": "693b19b88c741aa9e02566a40c9c090ca64f808aefdd7fcbff8e5d8cc42db04f"
+    },
+    {
+      "path": "ffmpeg-build-recipe-candidate.tar.gz",
+      "sha256": "915dce808d545de6fa37d19944ad8f8a875f3bcaf8811c49878e82a039200b06"
+    },
+    {
+      "path": "BUILD_IDENTITY.txt",
+      "sha256": "c838bc5190fafdbc78572da4978505c8d5d4682b291eb279f8a17e62d67f6b2e"
+    },
+    {
+      "path": "LICENSE.GPLv3.txt",
+      "sha256": "0b383d5a63da644f628d99c33976ea6487ed89aaa59f0b3257992deac1171e6b"
+    },
+    {
+      "path": "LICENSE.LGPLv3.txt",
+      "sha256": "ea7d049c7705dc13afc202dd18e1827f3484f8212fd3fa7b82fc4a0c363432c9"
+    }
+  ],
+  "source_bundled_with_recall": true,
+  "planned_companion_repository": "https://github.com/brady-balk3/recall-ffmpeg-source",
+  "companion_repository_published": true,
+  "remaining": [
+    "Upload the dependency source archives to the companion repository (archives over 100 MB as release assets) and make it public before any Recall binary is downloadable"
+  ],
+  "license_note": "FFmpeg and bundled dependencies retain their own licenses; Recall licensing does not replace them.",
+  "companion_repository": "https://github.com/brady-balk3/recall-ffmpeg-source",
+  "companion_repository_visibility": "private",
+  "companion_repository_commit": "22773b88bf910a86e083f7e20ea82b137bf7f36b",
+  "companion_source_tree": "8370a87a625b8ad0157ebbcd3b0260fa2e76543d",
+  "companion_upstream_files_verified": 10422,
+  "dependency_sources": {
+    "archives": 46,
+    "bytes": 373192606,
+    "note": "Source for every LGPL library enabled in this build (and FFmpeg itself) is collected at the pinned recipe revisions. Remaining unbundled dependencies are permissively licensed or Windows system components."
+  }
+}

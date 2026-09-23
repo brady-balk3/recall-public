@@ -1,0 +1,8 @@
+Silero VAD ONNX
+
+Creators: Silero Team. ONNX distribution: istupakov/silero-vad-onnx.
+Model source: https://huggingface.co/istupakov/silero-vad-onnx/tree/b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6
+Upstream project: https://github.com/snakers4/silero-vad
+License: MIT; see silero-vad.LICENSE.txt.
+Recall copies the checksum-verified ONNX artifact without modifying its bytes.
+Artifact SHA-256: 1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3

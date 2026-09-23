@@ -1,0 +1,344 @@
+{
+  "_comment": "Game auto-detection fingerprints (watches the VOD's own OCR text, no user selection needed). Tokens must be DISTINCTIVE to one game -- menu/HUD/killfeed text unlikely to appear in another title, in chat, or in a stream overlay. Matching is whole-phrase, case-insensitive, after OCR normalization (uppercase, |/! -> I, 0 -> O, punctuation -> space) against every OCR string captured across the VOD (engines/reaction/game_detect.py). Detection needs >= 2 DISTINCT tokens, one unique winner, and >= 40% of all matched fingerprint evidence; repetition is never independent evidence. Every game therefore lists >= 3 plausible tokens. Rules (enforced by scripts/validate_signatures.py): no token under two games; no token also in scene_lexicon.json (menu text like BATTLE PASS shows in every game's lobby); no short/common single words. A false-positive fingerprint match misroutes the whole scan's hype lexicon + OCR event triggers -- when unsure, leave it out.",
+  "fortnite": [
+    "VICTORY ROYALE",
+    "BATTLE BUS",
+    "STORM CIRCLE",
+    "SUPPLY LLAMA",
+    "SLURP JUICE",
+    "REBOOT VAN",
+    "ZERO BUILD",
+    "FORTNITE"
+  ],
+  "valorant": [
+    "SPIKE HAS BEEN PLANTED",
+    "SPIKE HAS BEEN DEFUSED",
+    "ATTACKERS WIN",
+    "DEFENDERS WIN",
+    "THRIFTY",
+    "VALORANT",
+    "SPECTRE",
+    "VANDAL"
+  ],
+  "apex": [
+    "CHAMPIONS OF THE ARENA",
+    "SQUAD ELIMINATED",
+    "RING DAMAGE",
+    "APEX LEGENDS",
+    "RESPAWN BEACON",
+    "KNOCKDOWN SHIELD",
+    "LEGENDARY HUNT"
+  ],
+  "cod": [
+    "GULAG",
+    "CONTRACT COMPLETE",
+    "WARZONE",
+    "CALL OF DUTY",
+    "KILLSTREAK",
+    "PLUNDER",
+    "LOADOUT DROP",
+    "SCORESTREAK"
+  ],
+  "minecraft": [
+    "YOU DIED",
+    "ENTER THE NETHER",
+    "RESPAWN ANCHOR",
+    "ENDER DRAGON",
+    "MINECRAFT",
+    "ACHIEVEMENT GET"
+  ],
+  "gta": [
+    "WASTED",
+    "GRAND THEFT AUTO",
+    "LOS SANTOS",
+    "MISSION PASSED",
+    "BUSTED",
+    "GTA ONLINE"
+  ],
+  "league_of_legends": [
+    "LEAGUE OF LEGENDS",
+    "AN ENEMY HAS BEEN SLAIN",
+    "AN ALLY HAS BEEN SLAIN",
+    "SUMMONERS RIFT",
+    "PENTAKILL",
+    "BARON NASHOR",
+    "MINIONS HAVE SPAWNED"
+  ],
+  "dota2": [
+    "ROSHAN",
+    "RADIANT VICTORY",
+    "DIRE VICTORY",
+    "AEGIS OF THE IMMORTAL",
+    "DOTA 2"
+  ],
+  "cs2": [
+    "COUNTER TERRORISTS WIN",
+    "TERRORISTS WIN",
+    "BOMB HAS BEEN PLANTED",
+    "BOMB HAS BEEN DEFUSED",
+    "COUNTER STRIKE"
+  ],
+  "overwatch": [
+    "PLAY OF THE GAME",
+    "OVERWATCH",
+    "TEAM KILL",
+    "PAYLOAD IS MOVING",
+    "POINT CAPTURED"
+  ],
+  "rocket_league": [
+    "ROCKET LEAGUE",
+    "SUPERSONIC",
+    "AERIAL GOAL",
+    "DEMOLITION",
+    "OVERTIME GOAL"
+  ],
+  "pubg": [
+    "WINNER WINNER CHICKEN DINNER",
+    "PUBG",
+    "BLUE ZONE",
+    "ERANGEL",
+    "CARE PACKAGE"
+  ],
+  "rainbow_six": [
+    "RAINBOW SIX",
+    "DEFUSER HAS BEEN PLANTED",
+    "DEFUSER DEACTIVATED",
+    "OPERATOR SELECT",
+    "HOSTAGE SECURED"
+  ],
+  "dead_by_daylight": [
+    "DEAD BY DAYLIGHT",
+    "BLOODPOINTS",
+    "GENERATOR COMPLETED",
+    "EXIT GATES POWERED",
+    "SACRIFICED"
+  ],
+  "elden_ring": [
+    "ELDEN RING",
+    "ENEMY FELLED",
+    "GREAT ENEMY FELLED",
+    "LOST GRACE DISCOVERED",
+    "TARNISHED"
+  ],
+  "world_of_warcraft": [
+    "WORLD OF WARCRAFT",
+    "AZEROTH",
+    "DUNGEON FINDER",
+    "RAID FINDER",
+    "ACHIEVEMENT EARNED"
+  ],
+  "hearthstone": [
+    "HEARTHSTONE",
+    "TAVERN BRAWL",
+    "WELL PLAYED",
+    "YOUR OPPONENT LEFT"
+  ],
+  "teamfight_tactics": [
+    "TEAMFIGHT TACTICS",
+    "CAROUSEL",
+    "LITTLE LEGENDS",
+    "PLAYER DAMAGE"
+  ],
+  "smash_bros": [
+    "SUPER SMASH BROS",
+    "GAME SET",
+    "SUDDEN DEATH ARENA",
+    "FINAL SMASH"
+  ],
+  "street_fighter": [
+    "STREET FIGHTER",
+    "CRITICAL ART",
+    "DRIVE IMPACT",
+    "PERFECT KO"
+  ],
+  "tekken": [
+    "TEKKEN",
+    "RAGE ART",
+    "KING OF IRON FIST",
+    "GREAT COMBO"
+  ],
+  "ea_fc": [
+    "EA SPORTS FC",
+    "ULTIMATE TEAM",
+    "SQUAD BATTLES",
+    "DIVISION RIVALS"
+  ],
+  "nba_2k": [
+    "NBA 2K",
+    "MYCAREER",
+    "MYTEAM",
+    "THE NEIGHBORHOOD"
+  ],
+  "destiny2": [
+    "DESTINY 2",
+    "GUARDIAN DOWN",
+    "THE CRUCIBLE",
+    "GAMBIT",
+    "POWER LEVEL"
+  ],
+  "warframe": [
+    "WARFRAME",
+    "TENNO",
+    "ORBITER",
+    "VOID FISSURE"
+  ],
+  "tarkov": [
+    "ESCAPE FROM TARKOV",
+    "RAID ENDED",
+    "SCAV",
+    "EXTRACTION POINT"
+  ],
+  "sea_of_thieves": [
+    "SEA OF THIEVES",
+    "GALLEON SUNK",
+    "ATHENAS FORTUNE",
+    "GOLD HOARDERS"
+  ],
+  "stardew_valley": [
+    "STARDEW VALLEY",
+    "JUNIMO",
+    "PELICAN TOWN",
+    "COMMUNITY CENTER"
+  ],
+  "terraria": [
+    "TERRARIA",
+    "EYE OF CTHULHU",
+    "BLOOD MOON IS RISING",
+    "WALL OF FLESH"
+  ],
+  "roblox": [
+    "ROBLOX",
+    "ROBUX",
+    "EXPERIENCE GAINED",
+    "OBBY"
+  ],
+  "among_us": [
+    "AMONG US",
+    "EMERGENCY MEETING",
+    "DEAD BODY REPORTED",
+    "IMPOSTOR",
+    "CREWMATE"
+  ],
+  "fall_guys": [
+    "FALL GUYS",
+    "QUALIFIED",
+    "CROWN CLASH",
+    "FINAL ROUND"
+  ],
+  "phasmophobia": [
+    "PHASMOPHOBIA",
+    "SPIRIT BOX",
+    "EMF LEVEL",
+    "GHOST ORB",
+    "SANITY"
+  ],
+  "lethal_company": [
+    "LETHAL COMPANY",
+    "PROFIT QUOTA",
+    "THE COMPANY BUILDING",
+    "SCRAP VALUE"
+  ],
+  "baldurs_gate": [
+    "BALDURS GATE",
+    "GATHER YOUR PARTY",
+    "CRITICAL MISS",
+    "LONG REST"
+  ],
+  "cyberpunk": [
+    "CYBERPUNK 2077",
+    "NIGHT CITY",
+    "NETRUNNER",
+    "CYBERWARE"
+  ],
+  "helldivers": [
+    "HELLDIVERS",
+    "SUPER EARTH",
+    "STRATAGEM",
+    "MANAGED DEMOCRACY"
+  ],
+  "palworld": [
+    "PALWORLD",
+    "PAL SPHERE",
+    "PAL CAPTURED",
+    "PALBOX"
+  ],
+  "ark": [
+    "ARK SURVIVAL",
+    "YOU TAMED",
+    "TRIBE LOG",
+    "TAMING EFFECTIVENESS"
+  ],
+  "hollow_knight": [
+    "HOLLOW KNIGHT",
+    "CHARM NOTCHES",
+    "HALLOWNEST",
+    "DREAM NAIL"
+  ],
+  "diablo": [
+    "DIABLO IV",
+    "NIGHTMARE DUNGEON",
+    "WORLD BOSS SPAWNING",
+    "HARDCORE CHARACTER"
+  ],
+  "path_of_exile": [
+    "PATH OF EXILE",
+    "WRAECLAST",
+    "EXALTED ORB",
+    "CHAOS ORB"
+  ],
+  "runescape": [
+    "RUNESCAPE",
+    "GIELINOR",
+    "SLAYER TASK",
+    "GRAND EXCHANGE"
+  ],
+  "genshin": [
+    "GENSHIN IMPACT",
+    "PRIMOGEMS",
+    "TEYVAT",
+    "SPIRAL ABYSS"
+  ],
+  "honkai_star_rail": [
+    "HONKAI STAR RAIL",
+    "TRAILBLAZER",
+    "STELLAR JADE",
+    "SIMULATED UNIVERSE"
+  ],
+  "zelda": [
+    "TEARS OF THE KINGDOM",
+    "BREATH OF THE WILD",
+    "HYRULE",
+    "SHRINE OF LIGHT"
+  ],
+  "pokemon": [
+    "WILD POKEMON",
+    "POKEDEX",
+    "SHINY POKEMON",
+    "GYM LEADER",
+    "IS EVOLVING"
+  ],
+  "mario_kart": [
+    "MARIO KART",
+    "RAINBOW ROAD",
+    "GRAND PRIX FINAL",
+    "TIME TRIAL RECORD"
+  ],
+  "halo": [
+    "HALO INFINITE",
+    "SPARTAN RANK",
+    "KILLING SPREE",
+    "ODDBALL"
+  ],
+  "starcraft": [
+    "STARCRAFT",
+    "PROTOSS",
+    "ZERG RUSH",
+    "NUCLEAR LAUNCH DETECTED"
+  ],
+  "civilization": [
+    "CIVILIZATION",
+    "WONDER COMPLETED",
+    "GOLDEN AGE BEGINS",
+    "DIPLOMATIC VICTORY"
+  ]
+}

@@ -1,0 +1,7 @@
+Recall base ranker and Second Look scoring parameters
+
+License: AGPL-3.0-or-later, matching the Recall application.
+See Recall-Scoring.LICENSE.txt for the full license text.
+
+These are Recall-authored scoring artifacts. Third-party speech, vision,
+and language models retain their own separately supplied licenses.

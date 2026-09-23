@@ -1,0 +1,72 @@
+{
+  "name": "recall-app",
+  "private": true,
+  "version": "0.1.0-beta.1",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && tsc -p tsconfig.node.json --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package:engine": "cd ../.. && venv\\Scripts\\python.exe -m PyInstaller apps/api/recall-engine.spec --noconfirm --distpath apps/api/dist --workpath apps/api/build",
+    "package:app-dir": "npm run build && electron-builder --win dir",
+    "package:full": "npm run package:engine && npm run package:app-dir",
+    "package:full:dir": "npm run package:full",
+    "package:zip": "powershell -ExecutionPolicy Bypass -File ../../scripts/package_portable.ps1",
+    "package:zip:reuse-engine": "powershell -ExecutionPolicy Bypass -File ../../scripts/package_portable.ps1 -SkipEngine",
+    "package:installer": "powershell -ExecutionPolicy Bypass -File ../../scripts/package_installed.ps1"
+  },
+  "dependencies": {
+    "lucide-react": "^1.21.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
+    "jsdom": "^26.1.0",
+    "terser": "^5.49.1",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4",
+    "vite-plugin-electron": "^0.28.7",
+    "vitest": "^3.2.4"
+  },
+  "build": {
+    "appId": "com.recall.app",
+    "productName": "Recall",
+    "icon": "build/icon.ico",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../api/dist/recall-engine",
+        "to": "recall-engine"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  }
+}

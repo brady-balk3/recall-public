@@ -1,0 +1,72 @@
+{
+  "_comment": "Non-gameplay scene tokens (lobby / menu / intermission). Used by engines/reaction/scene.py to LABEL clips that fired on social hype with no gameplay behind them (e.g. pregame lobby banter), so the review UI can tag + filter them instead of calling them gameplay reactions. Matching is whole-word/phrase, case-insensitive. Keep tokens strong and menu-only to avoid mislabeling real gameplay. 'intermission' tokens are stream-frame text (starting soon / BRB); 'lobby' tokens are in-game menus. Safe to extend per-game without code changes.",
+  "intermission": [
+    "STARTING SOON",
+    "STREAM STARTING",
+    "BE RIGHT BACK",
+    "STREAM STARTS",
+    "STARTING STREAM",
+    "BRB"
+  ],
+  "generic": [
+    "MAIN MENU",
+    "LOADING",
+    "CONNECTING",
+    "MATCHMAKING",
+    "FINDING MATCH",
+    "SEARCHING FOR MATCH",
+    "WAITING FOR PLAYERS",
+    "PRESS START",
+    "PLAY AGAIN"
+  ],
+  "fortnite": [
+    "LOBBY",
+    "BATTLE PASS",
+    "ITEM SHOP",
+    "LOCKER",
+    "READY UP",
+    "SQUAD FILL",
+    "COLLECTION BOOK",
+    "SAVE THE WORLD",
+    "V BUCKS"
+  ],
+  "valorant": [
+    "AGENT SELECT",
+    "FIND MATCH",
+    "PLAY VALORANT",
+    "BATTLEPASS",
+    "YOUR STORE",
+    "COLLECTION"
+  ],
+  "apex": [
+    "FIRING RANGE",
+    "READY UP",
+    "LEGENDS",
+    "LOADOUT",
+    "MASTERY",
+    "BATTLE PASS"
+  ],
+  "cod": [
+    "LOADOUT",
+    "BUY STATION",
+    "CREATE A CLASS",
+    "BARRACKS",
+    "MULTIPLAYER MENU",
+    "GUNSMITH"
+  ],
+  "minecraft": [
+    "CRAFTING TABLE",
+    "INVENTORY",
+    "SELECT WORLD",
+    "CREATE NEW WORLD",
+    "SINGLEPLAYER",
+    "MULTIPLAYER"
+  ],
+  "gta": [
+    "CHARACTER SELECT",
+    "INTERACTION MENU",
+    "AMMU-NATION",
+    "CLOTHES STORE",
+    "GARAGE"
+  ]
+}

@@ -1,0 +1,14 @@
+PP-OCRv6 small detection and recognition ONNX
+Attribution: PaddlePaddle
+Source: https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/tree/28fe5895c24fd108c19eb3e8479f4ab385fbfc62
+https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/tree/b8f84f0b80c529de40b4fbb3544b84fa7233a513
+License text: notices/PaddleOCR.LICENSE.txt
+Bundled file SHA-256 identities:
+ocr/PP-OCRv6_small_det_onnx/inference.onnx d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e
+ocr/PP-OCRv6_small_det_onnx/inference.json 89240f689a4a77aad75ef55a8df0a15c8e1d4980a327d17e58f24bbadde5aeab
+ocr/PP-OCRv6_small_det_onnx/inference.yml e75f7f36ade9b9e0545c18aac4eaff2546c61d0809662735b3efa88e86eb0e58
+ocr/PP-OCRv6_small_rec_onnx/inference.onnx 5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634
+ocr/PP-OCRv6_small_rec_onnx/inference.json f0bf53c853937a917affdd74467472167727f8ab0f0f7bded01c4a16c27e46e6
+ocr/PP-OCRv6_small_rec_onnx/inference.yml 26a2802dcc5b4553f0961ab0288bc491ce86069abbd69c19d61779940c9c7ab3
+Recall modifications: inference.yml files have Windows CRLF line endings; parsed configurations are identical to upstream. ONNX and JSON files are byte-identical.
+No endorsement by upstream creators is implied.

@@ -1,0 +1,11 @@
+Qwen3-ASR-1.7B Q8_0 GGUF and projector
+Attribution: Qwen team, Alibaba Cloud; conversion distributed by ggml-org
+Source: https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/tree/36a678687ba7d07a74ca70ccb0e36902e005fb80
+License text: notices/Apache-2.0.txt
+Bundled file SHA-256 identities:
+asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf 58e22d0532d4eacaf034cfac17a6fed159f37c41390c710186783be439d1fc57
+asr/qwen3-asr-1.7b/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf 46c1d533af3f354ceb37ce855dbceff7da7fa7cf1e6a523df3b13440bd164c0d
+Recall modifications: Selected files retain their matched upstream bytes. Local directory layout may differ.
+Base model: https://huggingface.co/Qwen/Qwen3-ASR-1.7B/tree/7278e1e70fe206f11671096ffdd38061171dd6e5
+Base publisher declares Apache-2.0. Standard license text supplied because the inspected base repository has no standalone LICENSE file.
+No endorsement by upstream creators is implied.

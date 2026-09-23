@@ -1,0 +1,9 @@
+all-MiniLM-L6-v2 (quantized ONNX)
+Publisher: sentence-transformers
+Source revision: 5641a7880f40ebf4035d05e60c5f9b7a9c272c84
+Source: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/tree/5641a7880f40ebf4035d05e60c5f9b7a9c272c84
+Files: onnx/model_quint8_avx2.onnx and tokenizer.json
+Recall stores the ONNX file directly under memory/all-minilm-l6-v2; bytes are unchanged.
+License: Apache License 2.0, included at memory/all-minilm-l6-v2/LICENSE.
+License source revision: 826711e54e001c83835913827a843d8dd0a1def9
+No endorsement by upstream creators is implied.

@@ -1,0 +1,11 @@
+Qwen3-4B-Instruct-2507 (Q4_K_M GGUF)
+Base model: Qwen team, Alibaba Cloud
+Base source: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507/tree/cdbee75f17c01a7cc42f958dc650907174af0554
+GGUF conversion distributor: Bartowski
+Conversion source: https://huggingface.co/bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF/tree/ae44f08e1392f39c0e474af10c3ff8355c8b6688
+Upstream filename: Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+Recall filename: Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+SHA-256: 2fde00ce69dd4899c70d020845e2638353015bba0fdf161b3eb965f2bca4464e
+Recall retains the upstream file bytes unchanged; filename shortened locally.
+License: Apache License 2.0; see Qwen3-4B-Instruct-2507.LICENSE.txt.
+No endorsement by the upstream creators is implied.

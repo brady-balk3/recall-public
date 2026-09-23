@@ -1,0 +1,8 @@
+YOLOX-s ONNX
+Attribution: Megvii-BaseDetection/YOLOX
+Source: https://github.com/Megvii-BaseDetection/YOLOX/releases/tag/0.1.1rc0
+License text: notices/YOLOX.LICENSE.txt
+Bundled file SHA-256 identities:
+vision/yolox_s.onnx c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063
+Recall modifications: Selected files retain their matched upstream bytes. Local directory layout may differ.
+No endorsement by upstream creators is implied.

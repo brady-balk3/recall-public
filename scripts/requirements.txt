@@ -1,0 +1,112 @@
+# PaddleOCR and MediaPipe require contrib, which includes the standard modules.
+# Install only this OpenCV distribution: all variants share the cv2 directory.
+opencv-contrib-python==4.10.0.84
+numpy==2.1.1
+# VOD download, chat replay, and game metadata all go through TwitchDownloaderCLI
+# (a native binary, resolved by core/twitchdl_path.py — env RECALL_TWITCHDL_PATH /
+# tools/twitchdownloader/ / PATH), NOT a pip package. yt-dlp and chat-downloader
+# were removed: the product is Twitch-only and the CLI speaks Twitch's current API.
+
+fastapi==0.139.0
+uvicorn==0.49.0
+# Required directly by the model setup coordinator for cross-process locking.
+filelock==3.29.0
+
+# Object detection: YOLOX (Apache-2.0) via the onnxruntime engine, used only
+# for person detection to validate facecam plates. See engines/vision/person_onnx.py.
+# Weights are NOT a pip package -- fetch them with scripts/fetch_person_model.py.
+#
+# This deliberately replaced `ultralytics`, which is AGPL-3.0 and therefore
+# cannot ship in a closed-source build. Do not reintroduce it; the packaging
+# spec fails the build on it. See docs/DETECTOR_RELICENSE_PLAN.md.
+
+# OCR: PaddleOCR PP-OCRv6 small via the onnxruntime engine. Do not use the
+# default paddle_static runtime; the packaged app should not require paddlepaddle.
+paddleocr==3.7.0
+
+# Reaction Highlight Engine (handbook/19)
+# Facecam emotion: HSEmotion ONNX (EfficientNet-B0) via onnxruntime — GPU when
+# CUDA EP is available, CPU otherwise. Face detection uses the Haar cascade
+# bundled with opencv-contrib-python.
+# onnxruntime-gpu ≤1.26.x (CUDA 12) matches torch+cu126; 1.27+ wants CUDA 13.
+# OCR tries GPU when the EP works and falls back to CPU (RECALL_OCR_GPU=0 forces
+# CPU). See core/device.py preload/probe notes in the GPU section below.
+onnxruntime-gpu==1.26.0
+# hsemotion-onnx is NOT installed for the product. Its code is Apache-2.0 but
+# its enet_b0_8_va_mtl weights derive from AffectNet, whose terms are
+# research/non-commercial, so it cannot ship in a paid build. Facecam arousal
+# now comes from the MediaPipe Face Landmarker (Apache-2.0) via
+# engines/emotion/blendshape_scorer.py.
+#
+# To A/B the two scorers on a dev box, install it by hand and set
+# RECALL_FACE_SCORER=hsemotion:
+#     venv/Scripts/pip.exe install hsemotion-onnx==0.3.1
+# recall-engine.spec refuses to package anything matching "hsemotion".
+# Face detection for the anchor pass (engines/vision/face_anchor.py).
+# Was previously an undeclared transitive install.
+mediapipe==1.0.1
+# Voice prosody uses numpy + scipy autocorrelation (no librosa, to avoid numba bloat).
+scipy==1.18.0
+# ASR hype + captions: VOD-level + per-clip transcription. Qwen3-ASR runs on
+# llama-cpp-python (below) against the bundled GGUF pair. faster-whisper went
+# with the fallback backend on 2026-09-01, taking ~1.6 GB of bundled weights
+# with it.
+#
+# openai-whisper STAYS, and not as a model: engines/caption/qwen_aligner.py
+# imports whisper.audio.log_mel_spectrogram for the forced aligner's mel
+# transform. No whisper CHECKPOINT is bundled any more -- this is a DSP
+# dependency, and dropping the package breaks the aligner, which is what
+# produces every word timing.
+openai-whisper==20250625
+# Keep the default CPU install on the same Torch release as the reviewed build.
+# This also accepts the matching +cu126 build used for optional GPU acceleration.
+torch==2.12.1
+# Qwen3-ASR's cheap chunking pass. The package carries the Silero VAD ONNX
+# graph that PyInstaller collects into the portable engine.
+onnx-asr==0.12.0
+# Qwen3-ForcedAligner loads its tokenizer directly through the Rust extension.
+tokenizers==0.23.1
+# Imported directly by the model fetchers. Arrives transitively today (via
+# llama-cpp-python, onnx-asr, paddlex, tokenizers); declared so a fetch cannot
+# break because one of those dropped it.
+huggingface_hub==1.22.0
+
+# Local semantic judge (HUMAN_CLIPS Package C): a small instruct GGUF judges
+# candidate transcripts (hook / payoff / self-contained + human titles).
+# OPTIONAL at runtime — the import is guarded inside engines/semantic/backend.py
+# and the judge silently skips when the package or the model file is absent.
+# Windows x64 uses the official prebuilt wheel below. PyPI selects an sdist
+# whose nested sources can exceed MAX_PATH, even with a shorter temporary path.
+# The wheel URL and published SHA256 are pinned; other platforms keep the
+# ordinary version requirement. The default wheel is CPU-only, which ran the semantic AND visual
+# judges ~10x slower than believed (measured 2026-07-19: ~48s -> ~5s per visual
+# verdict after the fix). The reliable GPU recipe is the PREBUILT cu124 wheel
+# (no local CMake build) plus colocating torch's CUDA runtime DLLs beside
+# llama.dll — automated and verified by:
+#     venv\Scripts\python.exe scripts\setup_gpu_llama.py
+# Re-run it after any llama-cpp-python reinstall (the DLL copies are wiped).
+# Every scan logs the state as llama_gpu=True/False in the device summary.
+llama-cpp-python @ https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.34/llama_cpp_python-0.3.34-py3-none-win_amd64.whl#sha256=6526fff614e5ef7e439e6369e076a78073e45e1d791dbe1d5e5d42661f46ca1a ; sys_platform == "win32" and platform_machine == "AMD64"
+llama-cpp-python==0.3.34 ; sys_platform != "win32" or platform_machine != "AMD64"
+
+# Twitch chat reaction channel (plan 9.1) is fetched via TwitchDownloaderCLI
+# (see the note at the top), not a pip package — its chat JSON also carries the
+# authoritative game + GAME_CHANGE timeline used for game detection.
+
+# --- Optional NVIDIA GPU acceleration (handbook/20) ---
+# CPU is the default and works everywhere. For an NVIDIA GPU, install the CUDA
+# build of torch + torchvision (MUST match versions):
+#   pip install torch==2.12.1+cu126 torchvision==0.27.1+cu126 --index-url https://download.pytorch.org/whl/cu126
+# core/device.py auto-detects CUDA and routes the ASR to it (CPU fallback).
+# Person detection runs on onnxruntime's providers, not torch -- see
+# core/device.py get_ort_providers() and engines/vision/person_onnx.py.
+#
+# onnxruntime-gpu is the default ORT build (OCR, HSEmotion). Pin to ≤1.26.x
+# (CUDA 12) to match torch+cu126 — 1.27+ ships for CUDA 13.
+# core/device.py preloads torch's CUDA/cuDNN via ort.preload_dlls() and probes
+# the CUDA EP before advertising it. OCR tries GPU when the EP works and falls
+# back to CPU on init failure. Force CPU OCR with RECALL_OCR_GPU=0.
+# Safe non-device OCR speed-ups still live in engines/ocr/ocr.py:
+#   - RECALL_OCR_MAX_SIDE (default 1280): downscale the OCR input frame
+#   - ocrStride (default 3): OCR cadence in seconds.
+# (AMD/Intel GPUs: onnxruntime-directml would be the cross-vendor route.)

@@ -1,0 +1,18 @@
+YAMNet ONNX and AudioSet class map
+Attribution: Google and the TensorFlow Models authors; ONNX conversion distributed by zeropointnine.
+YAMNet conversion: https://huggingface.co/zeropointnine/yamnet-onnx/tree/ac2ca3bd45d12ec1f19f1144205ea529b4e9dedf
+YAMNet code/model license: Apache-2.0; text in notices/TensorFlow-Models.LICENSE.txt.
+
+The bundled yamnet_class_map.csv exactly matches the 521-class file published by TensorFlow Models:
+https://github.com/tensorflow/models/blob/8b12ae202a3ccf8f965c730a4e7617204e32000b/research/audioset/yamnet/yamnet_class_map.csv
+Its 521 class identifiers and display names match Google's AudioSet ontology. Google publishes the ontology under Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0):
+https://github.com/audioset/ontology
+https://creativecommons.org/licenses/by-sa/4.0/
+The YAMNet map selects and reindexes 521 of the 527 AudioSet dataset classes. Recall distributes the published map unchanged. Google's separate CC BY 4.0 license for dataset annotations is not asserted for this ontology-derived map.
+
+Bundled file SHA-256 identities:
+yamnet.onnx 1510041dce24a2e9e84ec546807ac408ae496da6d1ed41bc3ccba649623f8e19
+yamnet_class_map.csv cdf24d193e196d9e95912a2667051ae203e92a2ba09449218ccb40ef787c6df2
+Class-map matching distribution: https://huggingface.co/audiomagic/yamnet-onnx/tree/f25b741c2f0bdc6d7e6db24b5fddda23347dbafd
+Recall modifications: Selected files retain their matched upstream bytes. Local directory layout may differ.
+No endorsement by upstream creators is implied.

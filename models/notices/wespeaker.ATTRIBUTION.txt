@@ -1,0 +1,13 @@
+WeSpeaker VoxCeleb ResNet34-LM speaker embedding model
+
+Creator: WeSpeaker project contributors.
+Model source: https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/tree/f0c48c298fd835726c27956a5d617bad7115627e
+Model license guidance: https://github.com/wenet-e2e/wespeaker/blob/master/docs/pretrained.md
+Dataset information: https://mm.kaist.ac.kr/datasets/voxceleb/
+The publisher states that VoxCeleb pretrained models follow CC BY 4.0.
+License: https://creativecommons.org/licenses/by/4.0/
+Full license text: wespeaker-CC-BY-4.0.txt.
+The model is supplied without warranties as described in that license.
+Recall copies the checksum-verified ONNX artifact without modifying its bytes.
+Artifact SHA-256: 7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068
+No endorsement of Recall by the model or dataset contributors is implied.

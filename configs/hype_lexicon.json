@@ -1,0 +1,75 @@
+{
+  "_comment": "Editable hype lexicon for the ASR Hype Engine (plan §5.3). Weights 0..1 are added to speech_hype at the matched word's timestamp, then diffused +/-1.5s into R(t). Used in Phase 3; safe to extend per-game without code changes.",
+  "default": {
+    "lets go": 0.9,
+    "let's go": 0.9,
+    "no way": 0.8,
+    "oh my god": 0.8,
+    "oh my gosh": 0.7,
+    "what": 0.5,
+    "clutch": 0.9,
+    "cracked": 0.7,
+    "insane": 0.8,
+    "actually insane": 0.9,
+    "are you kidding": 0.7,
+    "gg": 0.6,
+    "easy": 0.5,
+    "haha": 0.5,
+    "lmao": 0.5
+  },
+  "fortnite": {
+    "victory royale": 1.0,
+    "knocked": 0.7,
+    "down": 0.5,
+    "knock": 0.6,
+    "eliminated": 0.7,
+    "we won": 0.9,
+    "dub": 0.7,
+    "build": 0.2
+  },
+  "valorant": {
+    "ace": 1.0,
+    "clutch": 0.9,
+    "spike down": 0.7,
+    "one tap": 0.8,
+    "thrifty": 0.8,
+    "flawless": 0.8,
+    "last player": 0.6
+  },
+  "apex": {
+    "champion": 1.0,
+    "squad wipe": 0.9,
+    "knocked": 0.7,
+    "downed": 0.7,
+    "cracked": 0.7,
+    "third party": 0.5,
+    "armor swap": 0.5
+  },
+  "cod": {
+    "dub": 0.7,
+    "gulag": 0.6,
+    "killstreak": 0.7,
+    "nuke": 1.0,
+    "one tap": 0.8,
+    "cracked": 0.7,
+    "third partied": 0.5,
+    "clutch": 0.9
+  },
+  "minecraft": {
+    "let's go": 0.9,
+    "diamonds": 0.8,
+    "enchanted": 0.6,
+    "creeper": 0.6,
+    "so close": 0.6,
+    "we did it": 0.8,
+    "speedrun": 0.5
+  },
+  "gta": {
+    "wasted": 0.5,
+    "busted": 0.6,
+    "heist": 0.7,
+    "so close": 0.6,
+    "we got away": 0.8,
+    "cops": 0.5
+  }
+}

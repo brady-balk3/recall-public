@@ -1,0 +1,12 @@
+MediaPipe Face Landmarker float16 version 1
+Attribution: Google / MediaPipe
+Source: https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+License text: notices/MediaPipe.LICENSE.txt
+Bundled file SHA-256 identities:
+face/face_landmarker.task 64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff
+Recall modifications: Selected files retain their matched upstream bytes. Local directory layout may differ.
+No endorsement by upstream creators is implied.
+Model-specific license evidence (each linked model card declares Apache License 2.0):
+BlazeFace short range: https://storage.googleapis.com/mediapipe-assets/MediaPipe%20BlazeFace%20Model%20Card%20(Short%20Range).pdf
+FaceMesh V2: https://storage.googleapis.com/mediapipe-assets/Model%20Card%20MediaPipe%20Face%20Mesh%20V2.pdf
+Blendshape V2: https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Blendshape%20V2.pdf

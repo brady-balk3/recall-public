@@ -1,0 +1,362 @@
+{
+  "version": 1,
+  "kind": "model-payload-review-candidate",
+  "approved_for_packaging": false,
+  "files": [
+    {
+      "path": "vision/yolox_s.onnx",
+      "sha256": "c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063",
+      "role": "asset",
+      "notices": [
+        "notices/YOLOX.LICENSE.txt",
+        "notices/YOLOX.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "face/face_landmarker.task",
+      "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+      "role": "asset",
+      "notices": [
+        "notices/MediaPipe.LICENSE.txt",
+        "notices/MediaPipe-Face.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "memory/all-minilm-l6-v2/model_quint8_avx2.onnx",
+      "sha256": "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21",
+      "role": "asset",
+      "notices": [
+        "memory/all-minilm-l6-v2/LICENSE",
+        "notices/MiniLM.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "memory/all-minilm-l6-v2/tokenizer.json",
+      "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+      "role": "asset",
+      "notices": [
+        "memory/all-minilm-l6-v2/LICENSE",
+        "notices/MiniLM.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "ocr/PP-OCRv6_small_det_onnx/inference.onnx",
+      "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e",
+      "role": "asset",
+      "notices": [
+        "notices/PaddleOCR.LICENSE.txt",
+        "notices/PaddleOCR.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "ocr/PP-OCRv6_small_det_onnx/inference.json",
+      "sha256": "89240f689a4a77aad75ef55a8df0a15c8e1d4980a327d17e58f24bbadde5aeab",
+      "role": "asset",
+      "notices": [
+        "notices/PaddleOCR.LICENSE.txt",
+        "notices/PaddleOCR.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "ocr/PP-OCRv6_small_det_onnx/inference.yml",
+      "sha256": "e75f7f36ade9b9e0545c18aac4eaff2546c61d0809662735b3efa88e86eb0e58",
+      "role": "asset",
+      "notices": [
+        "notices/PaddleOCR.LICENSE.txt",
+        "notices/PaddleOCR.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "ocr/PP-OCRv6_small_rec_onnx/inference.onnx",
+      "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634",
+      "role": "asset",
+      "notices": [
+        "notices/PaddleOCR.LICENSE.txt",
+        "notices/PaddleOCR.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "ocr/PP-OCRv6_small_rec_onnx/inference.json",
+      "sha256": "f0bf53c853937a917affdd74467472167727f8ab0f0f7bded01c4a16c27e46e6",
+      "role": "asset",
+      "notices": [
+        "notices/PaddleOCR.LICENSE.txt",
+        "notices/PaddleOCR.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "ocr/PP-OCRv6_small_rec_onnx/inference.yml",
+      "sha256": "26a2802dcc5b4553f0961ab0288bc491ce86069abbd69c19d61779940c9c7ab3",
+      "role": "asset",
+      "notices": [
+        "notices/PaddleOCR.LICENSE.txt",
+        "notices/PaddleOCR.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "llm/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      "sha256": "2fde00ce69dd4899c70d020845e2638353015bba0fdf161b3eb965f2bca4464e",
+      "role": "asset",
+      "notices": [
+        "notices/Qwen3-4B-Instruct-2507.LICENSE.txt",
+        "notices/Qwen3-4B-Instruct-2507.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "vlm/qwen3.5-4b/Qwen3.5-4B-Q4_K_M.gguf",
+      "sha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+      "role": "asset",
+      "notices": [
+        "notices/Qwen3.5-4B.LICENSE.txt",
+        "notices/Qwen3.5-4B.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "vlm/qwen3.5-4b/mmproj-F16.gguf",
+      "sha256": "cd88edcf8d031894960bb0c9c5b9b7e1fea6ebee02b9f7ce925a00d12891f864",
+      "role": "asset",
+      "notices": [
+        "notices/Qwen3.5-4B.LICENSE.txt",
+        "notices/Qwen3.5-4B.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "yamnet.onnx",
+      "sha256": "1510041dce24a2e9e84ec546807ac408ae496da6d1ed41bc3ccba649623f8e19",
+      "role": "asset",
+      "notices": [
+        "notices/TensorFlow-Models.LICENSE.txt",
+        "notices/YAMNet.ATTRIBUTION.txt",
+        "notices/TensorFlow-Models.AUTHORS.txt"
+      ]
+    },
+    {
+      "path": "yamnet_class_map.csv",
+      "sha256": "cdf24d193e196d9e95912a2667051ae203e92a2ba09449218ccb40ef787c6df2",
+      "role": "asset",
+      "notices": [
+        "notices/TensorFlow-Models.LICENSE.txt",
+        "notices/YAMNet.ATTRIBUTION.txt",
+        "notices/TensorFlow-Models.AUTHORS.txt"
+      ]
+    },
+    {
+      "path": "asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf",
+      "sha256": "58e22d0532d4eacaf034cfac17a6fed159f37c41390c710186783be439d1fc57",
+      "role": "asset",
+      "notices": [
+        "notices/Apache-2.0.txt",
+        "notices/Qwen3-ASR.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "asr/qwen3-asr-1.7b/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf",
+      "sha256": "46c1d533af3f354ceb37ce855dbceff7da7fa7cf1e6a523df3b13440bd164c0d",
+      "role": "asset",
+      "notices": [
+        "notices/Apache-2.0.txt",
+        "notices/Qwen3-ASR.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "asr/qwen3-aligner-0.6b/config.json",
+      "sha256": "91f38394bd8117ad2ccbdfc0942d9c100a7482d4c43688674ef2a40fe64eb061",
+      "role": "asset",
+      "notices": [
+        "notices/Apache-2.0.txt",
+        "notices/Qwen3-ForcedAligner.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "asr/qwen3-aligner-0.6b/tokenizer.json",
+      "sha256": "e95e4127f5ea82f89695f00bb3c143eb7edd411e6096e27ff56319397f481e77",
+      "role": "asset",
+      "notices": [
+        "notices/Apache-2.0.txt",
+        "notices/Qwen3-ForcedAligner.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "asr/qwen3-aligner-0.6b/onnx/model.onnx",
+      "sha256": "7b2bff8b7a8df4120b450673d65915488e5fd43e107f87f3816d9e2c830a9e8b",
+      "role": "asset",
+      "notices": [
+        "notices/Apache-2.0.txt",
+        "notices/Qwen3-ForcedAligner.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "asr/qwen3-aligner-0.6b/onnx/model.onnx_data",
+      "sha256": "429a19b51f5f8a2504b5e573de87c8f74e2ad0be68e0ff7ba1e645663507bcdc",
+      "role": "asset",
+      "notices": [
+        "notices/Apache-2.0.txt",
+        "notices/Qwen3-ForcedAligner.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "asr/silero-vad/silero_vad.onnx",
+      "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+      "role": "asset",
+      "notices": [
+        "notices/silero-vad.ATTRIBUTION.txt",
+        "notices/silero-vad.LICENSE.txt"
+      ]
+    },
+    {
+      "path": "speaker/voxceleb_resnet34_LM.onnx",
+      "sha256": "7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068",
+      "role": "asset",
+      "notices": [
+        "notices/wespeaker.ATTRIBUTION.txt",
+        "notices/wespeaker-CC-BY-4.0.txt"
+      ]
+    },
+    {
+      "path": "memory/all-minilm-l6-v2/LICENSE",
+      "sha256": "1e66d43b04a3f2428303ad3316d1fbb996991541192892b22d21f0065a093b2b",
+      "role": "notice"
+    },
+    {
+      "path": "notices/Apache-2.0.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "role": "notice"
+    },
+    {
+      "path": "notices/MediaPipe-Face.ATTRIBUTION.txt",
+      "sha256": "706ea60ea0ba00eab53b485eb3502162f54b8d309041c8a0495d04c5f2a1e85f",
+      "role": "notice"
+    },
+    {
+      "path": "notices/MediaPipe.LICENSE.txt",
+      "sha256": "8707eef0533987efc5b155d64761eeb6e20793f50b9bd1a68dad1cf4719d0ed8",
+      "role": "notice"
+    },
+    {
+      "path": "notices/MiniLM.ATTRIBUTION.txt",
+      "sha256": "c852a50f5af85285f846a44373d5e48e0d569693a13a8418a2bb13532beea3e9",
+      "role": "notice"
+    },
+    {
+      "path": "notices/PaddleOCR.ATTRIBUTION.txt",
+      "sha256": "0170efd286f54a0950f343b445d91d8980308d4a5cd3853fb4941e697d466975",
+      "role": "notice"
+    },
+    {
+      "path": "notices/PaddleOCR.LICENSE.txt",
+      "sha256": "3840c5c0c61c294264d2dd77b8777be6ddd90121ef4e0e64abcd22edea581d6e",
+      "role": "notice"
+    },
+    {
+      "path": "notices/Qwen3-4B-Instruct-2507.ATTRIBUTION.txt",
+      "sha256": "4ac8b5bf77084291772a1d4ad9a3e71a4673d6aa972477b760409456cfa07f0a",
+      "role": "notice"
+    },
+    {
+      "path": "notices/Qwen3-4B-Instruct-2507.LICENSE.txt",
+      "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+      "role": "notice"
+    },
+    {
+      "path": "notices/Qwen3-ASR.ATTRIBUTION.txt",
+      "sha256": "a54049332ac2ac18749788d91a49590dc1f417a560ef5555a8f0ac480e011dd8",
+      "role": "notice"
+    },
+    {
+      "path": "notices/Qwen3-ForcedAligner.ATTRIBUTION.txt",
+      "sha256": "7d8b72e289e99ae70caec3cf35e1cdb7b509db799fa8154926123186db9f4bf8",
+      "role": "notice"
+    },
+    {
+      "path": "notices/Qwen3.5-4B.ATTRIBUTION.txt",
+      "sha256": "384626d2ebd827895ba95f75d69dbc4ff5211eb8b8e223a87ac79c7a9cbdeb56",
+      "role": "notice"
+    },
+    {
+      "path": "notices/Qwen3.5-4B.LICENSE.txt",
+      "sha256": "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a",
+      "role": "notice"
+    },
+    {
+      "path": "notices/TensorFlow-Models.LICENSE.txt",
+      "sha256": "5b17814bf0de8cf65069bc6d7cc38cff19fcaa864d243423ad3ef3db01b52385",
+      "role": "notice"
+    },
+    {
+      "path": "notices/YAMNet.ATTRIBUTION.txt",
+      "sha256": "26f724ce3cbdc981039f4d0d6cae276483326a42636c018ea3122fcb8c64d353",
+      "role": "notice"
+    },
+    {
+      "path": "notices/YOLOX.ATTRIBUTION.txt",
+      "sha256": "9724dc5a0f7c4aaeffcb60f27435ae6c017283800dea89bdfe32f50c89985f2d",
+      "role": "notice"
+    },
+    {
+      "path": "notices/YOLOX.LICENSE.txt",
+      "sha256": "577c03d505ec80f667ebf96ebd0cc4f6825c817ca1088ee348c48aaabd51bd92",
+      "role": "notice"
+    },
+    {
+      "path": "notices/silero-vad.ATTRIBUTION.txt",
+      "sha256": "26c138a060dc879ddb75c3a12bb54e42537662072bdf5812874d8516a79d6250",
+      "role": "notice"
+    },
+    {
+      "path": "notices/silero-vad.LICENSE.txt",
+      "sha256": "2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b",
+      "role": "notice"
+    },
+    {
+      "path": "notices/wespeaker-CC-BY-4.0.txt",
+      "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+      "role": "notice"
+    },
+    {
+      "path": "notices/wespeaker.ATTRIBUTION.txt",
+      "sha256": "3d6c6a3bc2d180f30d08190f3a1f020604ae99a40426bd566a1cede867eff68e",
+      "role": "notice"
+    },
+    {
+      "path": "notices/TensorFlow-Models.AUTHORS.txt",
+      "role": "notice",
+      "sha256": "d5d1b77d756ef63968edbba5f31ba2c79179bce9dcccc93bff25a7e32ef4bb0d"
+    },
+    {
+      "path": "public-release/ranker_base.json",
+      "sha256": "6dd4662678f780a166808422a5772b1a434f19a642072f7f6867c7eac11e671a",
+      "role": "asset",
+      "notices": [
+        "notices/Recall-Scoring.LICENSE.txt",
+        "notices/Recall-Scoring.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "public-release/second_look_rejector.json",
+      "sha256": "e9549f4bb0e5dad1df7a94de05038a9d4a2e375840223c589099ce376a745727",
+      "role": "asset",
+      "notices": [
+        "notices/Recall-Scoring.LICENSE.txt",
+        "notices/Recall-Scoring.ATTRIBUTION.txt"
+      ]
+    },
+    {
+      "path": "notices/Recall-Scoring.LICENSE.txt",
+      "sha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
+      "role": "notice"
+    },
+    {
+      "path": "notices/Recall-Scoring.ATTRIBUTION.txt",
+      "sha256": "59f5051ecb669971bc46d8c15f29d7bd10b67e84d221e988c2b088f80591a77e",
+      "role": "notice"
+    }
+  ],
+  "blocked_assets": [],
+  "remaining_review": [
+    "Full frozen-bundle and runtime dependency notice verification"
+  ],
+  "model_notice_scope_evidence": "upstream-notice-scope.json",
+  "scoring_ownership_confirmed_by_user": true,
+  "scoring_license": "AGPL-3.0-or-later",
+  "approved_for_distribution": false
+}

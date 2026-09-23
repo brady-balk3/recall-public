@@ -1,0 +1,11 @@
+-r requirements.txt
+
+pytest==9.1.1
+pip-audit==2.10.1
+ruff==0.15.21
+bandit==1.9.4
+
+# Packaging the portable engine: apps/desktop's `package:engine` runs
+# `python -m PyInstaller apps/api/recall-engine.spec`. Undeclared until now,
+# so a fresh clone could build the client and not the engine it needs.
+pyinstaller==6.21.0
