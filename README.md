@@ -1,6 +1,20 @@
 # Recall
 
-Recall is a local Windows desktop app for finding, reviewing, and exporting short clips from long streams and recordings. Its review tools let you adjust framing, captions, and clip boundaries before export.
+**Turn a five-hour stream into clips you can post — without scrubbing through it yourself.**
+
+Recall is a free Windows app for streamers and the people who clip for them. Point it at a Twitch VOD or a recording on your PC, and it watches the whole thing for you: the big reactions, the funny exchanges, the clutch plays, the moments chat went off. It hands back a deck of short vertical clips, already framed for TikTok, YouTube Shorts and Reels, with your facecam placed and captions timed to what you said.
+
+You stay in charge. Every clip opens in a review editor where you keep or pass, nudge the start and end, fix the framing, or correct a caption before anything is exported.
+
+## What it does
+
+- **Finds moments, not just loud bits.** It combines what's on screen, what you say, how you react, and what chat does, then picks the moments worth watching on their own.
+- **Frames for vertical.** It detects your facecam and stacks it with the gameplay for 9:16 video.
+- **Captions automatically.** Word-timed captions from on-device speech recognition, and you can edit them.
+- **Keeps you in control.** Review, trim, reframe and re-render any clip before it leaves the app.
+- **Runs entirely on your PC.** No account, no upload, no subscription. Your recordings, scans and clips stay on your machine; the network is used only to download a Twitch VOD you ask for and to fetch the app and its models during setup.
+
+Built and tested on Windows 11 with an NVIDIA GPU. The first install downloads roughly 12 GB of AI models.
 
 ## Install
 
