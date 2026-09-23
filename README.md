@@ -28,6 +28,58 @@ You stay in charge. Every clip opens in a review editor where you keep or pass, 
 
 **Tested on:** Windows 11 Pro, AMD Ryzen 7 7800X3D, 32 GB RAM, NVIDIA RTX 4070 Ti SUPER (16 GB). Other setups should work within the table above, but haven't been verified yet. If yours doesn't, please open an issue.
 
+## Scan modes
+
+| Mode | What it does | When to use it |
+| --- | --- | --- |
+| **Best quality** (default) | Transcribes the whole stream, reads facecam expressions, and checks on-screen text every 3 seconds. Also builds a complete searchable transcript. | Your normal choice. Slower, but it sees everything. |
+| **Smart scan** | Skips the full transcript and facecam expressions, and checks on-screen text every 6 seconds. Only the clips it picks get transcribed for captions. | A quick first pass on a long VOD. It can miss moments that are mostly talking. |
+
+## Performance profiles
+
+You choose how much of your PC Recall may use, in onboarding or later in Settings. Scans always run at below-normal priority and use Windows' efficiency mode, so the app you're using stays in front.
+
+| Profile | CPU workers | RAM kept free | Use it when |
+| --- | --- | --- | --- |
+| **Keep PC responsive** | 1–4, leaving about 25% of cores free | 6 GB | You're gaming or streaming while it scans. |
+| **Balanced** (recommended) | Physical cores minus 2 (2–12) | 4 GB | Everyday use. |
+| **Full speed** | Physical cores minus 1 (up to 16) | 2 GB | You've walked away from the PC. |
+
+### How the work is split
+
+The heavy part of a scan, reading video frames for on-screen text, people and your facecam, is split across parallel **perception workers**. Recall sizes that pool from your hardware at the start of each scan:
+
+1. **CPU pool.** One worker per *physical* core (hyperthreads don't help this workload), minus the profile's headroom. It's then capped so each worker gets about 1.5 GB of RAM while the profile's reserve stays free.
+2. **GPU upgrade.** With an NVIDIA GPU, Recall measures free VRAM, keeps 2 GB back for Windows and your other apps, and allows about 1.2 GB per GPU worker. If at least two GPU workers fit, the pool moves to the GPU. Each GPU worker runs about 2–3× real time, against about 1× for a CPU worker. If fewer than two fit, it keeps the full CPU pool, because that's faster. The upgrade can never make a scan slower.
+3. **One heavy model at a time.** Speech recognition and the clip judges run in later stages, one after another, never alongside the perception workers. Peak VRAM is therefore whichever of the two is larger, not the sum.
+
+## AI models
+
+Every model runs locally. The large ones are downloaded from Hugging Face at pinned, checksum-verified versions during setup; the small ones ship with the app.
+
+| Model | What Recall uses it for | Size on disk | Approx. VRAM while running |
+| --- | --- | --- | --- |
+| [Qwen3-ASR 1.7B](https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF) (Q8) | Speech recognition for transcripts and captions | 2.5 GB | ~3 GB |
+| [Qwen3 ForcedAligner 0.6B](https://huggingface.co/valoomba/Qwen3-ForcedAligner-0.6B-ONNX) | Word-level timing for captions | 3.7 GB | ~4 GB |
+| [Qwen3-4B Instruct 2507](https://huggingface.co/bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF) (Q4_K_M) | Text judge: does this moment make sense and land on its own? | 2.5 GB | ~3 GB |
+| [Qwen3.5-4B](https://huggingface.co/unsloth/Qwen3.5-4B-GGUF) (Q4_K_M, with vision) | Visual judge: looks at frames from candidate clips | 3.4 GB | ~3–4 GB |
+| YOLOX-s / YOLOX-tiny | Person detection for facecam framing | small | part of perception workers |
+| PaddleOCR PP-OCRv6 (small) | Reading on-screen text such as kill feeds and win banners | small | part of perception workers |
+| MediaPipe Face Landmarker | Facecam expressions (Best quality only) | small | CPU |
+| YAMNet | Audio events: laughter, screams, combat sounds and intense music | small | CPU |
+| Silero VAD | Finding speech so transcription skips silence | 2 MB | CPU |
+| WeSpeaker ResNet34 | Telling speakers apart | 27 MB | CPU |
+| MiniLM | Meaning-based search over your stream transcripts | small | CPU |
+| Recall scoring models | Ranking candidate moments and a second-look filter | 3.5 MB | CPU |
+
+The large models total about 12 GB. VRAM figures are estimates from model size. On the test machine, perception workers measured about 1 GB of VRAM each.
+
+## CPU-only mode
+
+Recall runs on machines without a supported GPU, and it tells you when it's in CPU mode. Every stage, including speech recognition and the judges, falls back to the CPU. AMD and Intel GPUs aren't accelerated yet, so they use CPU mode too.
+
+CPU-only mode is **very limited**. A full Best quality scan of a multi-hour stream can take many times longer than on an NVIDIA GPU, and the judges are especially slow. Use Smart scan, keep VODs short, and expect to leave it running. This path has not been tested on a machine without an NVIDIA GPU yet.
+
 ## Install
 
 Download the Windows installer from this repository's Releases page when a release is available. The small setup program downloads a checksum-verified application package from GitHub and the pinned large model weights from Hugging Face. You do not need to download model files manually. The first install needs an internet connection and enough disk space for the application, models, and your source videos.
