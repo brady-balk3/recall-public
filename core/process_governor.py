@@ -352,6 +352,7 @@ def available_vram_gb():
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=10, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode == 0:
             # Multi-GPU: the workers all land on device 0, so read the first row.

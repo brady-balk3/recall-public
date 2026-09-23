@@ -96,17 +96,123 @@ def _installer_streams():
         setattr(sys, name, stream)
 
 
+def _gb(value: int) -> str:
+    if value >= 100_000_000:
+        return f"{value / 1e9:.1f} GB"
+    if value >= 1_000_000:
+        return f"{round(value / 1e6)} MB"
+    return f"{max(1, round(value / 1e3))} KB"
+
+
+class _SetupLog:
+    """Readable per-file progress for the installer's detail log.
+
+    Installer users watch a progress bar that cannot move during this step, so
+    each file gets a numbered line and large files report every 10%. HF's
+    blocking download reports nothing until it returns, so while one runs the
+    growth of its ``*.incomplete`` cache file stands in for progress; if the
+    cache is laid out differently, those lines are simply absent.
+    """
+
+    STEP = 10
+
+    def __init__(self, stream=None, cache_root: Path | None = None):
+        self.stream = stream
+        self.cache_root = cache_root
+        # Events name a file by its remote path while downloading and by its
+        # installed path once ready, so both resolve to the same entry.
+        self.order: dict[str, tuple[int, int]] = {}
+        self.total = 0
+        for _, _, files in download_groups():
+            for remote, (relative, size, _) in files.items():
+                self.total += 1
+                self.order.setdefault(remote, (self.total, size))
+                self.order.setdefault(relative, (self.total, size))
+        self.state = None
+        self.shown = 0
+        self._watch = None
+
+    def _print(self, text: str) -> None:
+        print(text, file=self.stream or sys.stdout, flush=True)
+
+    def _percent(self, label: str, done: int, total: int) -> None:
+        if total < 100_000_000:
+            return
+        step = min(100, int(done * 100 / total)) // self.STEP * self.STEP
+        if step > self.shown:
+            self.shown = step
+            self._print(f"      {label} {step}% ({_gb(done)} of {_gb(total)})")
+
+    def _stop_watch(self) -> None:
+        if self._watch is not None:
+            stop, thread = self._watch
+            stop.set()
+            thread.join(timeout=5)
+            self._watch = None
+
+    def _start_watch(self, total: int) -> None:
+        if self.cache_root is None or total < 100_000_000:
+            return
+        import threading
+
+        stop = threading.Event()
+
+        def poll():
+            while not stop.wait(2.0):
+                try:
+                    done = sum(p.stat().st_size for p in self.cache_root.rglob("*.incomplete"))
+                except OSError:
+                    continue
+                if done:
+                    self._percent("downloaded", min(done, total), total)
+
+        thread = threading.Thread(target=poll, daemon=True)
+        thread.start()
+        self._watch = (stop, thread)
+
+    def __call__(self, event: dict) -> None:
+        name = event["file"]
+        index, size = self.order.get(name, (0, int(event.get("bytes_total") or 0)))
+        prefix = f"[{index}/{self.total}]" if index else "[model]"
+        state = (event["phase"], name)
+        if state != self.state:
+            self._stop_watch()
+            self.state = state
+            self.shown = 0
+            phase = event["phase"]
+            short = Path(name).name
+            if phase == "downloading":
+                self._print(f"{prefix} Downloading {short} ({_gb(size)})...")
+                self._start_watch(size)
+            elif phase == "installing":
+                self._print(f"{prefix} Verifying {short}...")
+            elif phase == "ready":
+                self._print(f"{prefix} {short} ready")
+            elif phase == "checking":
+                pass
+            else:
+                self._print(f"{prefix} {phase}: {short}")
+        if event["phase"] == "installing":
+            self._percent("verified", int(event.get("bytes_completed") or 0), size)
+
+    def close(self) -> None:
+        self._stop_watch()
+
+
 def main() -> int:
     from core.bundle_paths import get_resource_dir
 
     _installer_streams()
-    previous = None
-    def report(event):
-        nonlocal previous
-        state = (event["phase"], event["file"])
-        if state != previous:
-            print(f"{state[0]}: {state[1]}", flush=True)
-            previous = state
+    # Setup users cannot act on the Windows symlink advice; it only adds noise.
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+    try:
+        from huggingface_hub.constants import HF_HUB_CACHE
+        cache_root = Path(HF_HUB_CACHE)
+    except Exception:
+        cache_root = None
+    report = _SetupLog(cache_root=cache_root)
+    print(f"Downloading {report.total} model files (about 12 GB). "
+          "This usually takes 5-20 minutes.", flush=True)
     try:
         install_models(Path(get_resource_dir()) / "models", progress=report)
         print("Recall models verified and ready.", flush=True)
@@ -114,3 +220,5 @@ def main() -> int:
     except Exception as exc:
         print(f"Model setup did not finish: {exc}", file=sys.stderr, flush=True)
         return 1
+    finally:
+        report.close()

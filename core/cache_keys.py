@@ -35,7 +35,8 @@ def transcript_cache_name(key: str, model_label: str, ext: str, fast: bool = Fal
     settings, so callers key them on the settings-dependent video hash;
     full transcripts use the content-only audio key.
     """
-    prefix = "fast_speech_v1" if fast else "transcript"
+    # v2: scout transcripts record covered_regions (unheard != silent).
+    prefix = "fast_speech_v2" if fast else "transcript"
     return f"{key}_{prefix}_{model_label}{ext}"
 
 

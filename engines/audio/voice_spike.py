@@ -31,7 +31,7 @@ def extract_audio(video_path: str, output_path: str | None = None,
         "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
         output_path, "-y"
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     return output_path
 
 def _clamp(value: float, min_value: float = 0.0, max_value: float = 5.0) -> float:

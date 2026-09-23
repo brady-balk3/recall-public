@@ -1936,6 +1936,40 @@ def _editorial_window(
     return {"start": float(trimmed["start"]), "end": float(trimmed["end"])}
 
 
+# A moment counts as heard when at least this share of it was transcribed.
+UNHEARD_SPEECH_MAX_COVERAGE = 0.5
+
+
+def _mark_unheard_speech(candidates: List[dict], transcript: Optional[dict]) -> None:
+    """Flag candidates whose speech was never transcribed.
+
+    Smart scan transcribes only a budget of likely regions, and a failed ASR
+    pass leaves no transcript at all. The judges are then told "(no clear
+    speech)" for moments nobody listened to, which a visual judge reads as a
+    frames-only skip. Measured 2026-09-23 on a 5-minute test cut: 0.9 min of
+    scout coverage, all 19 finalists visual-skipped, empty deck, while Best
+    quality on the same file kept 4. A full transcript carries no
+    ``covered_regions`` and so covers every candidate.
+    """
+    if transcript is None:
+        regions = []
+    elif "covered_regions" not in transcript:
+        for c in candidates:
+            c["speech_unheard"] = False
+        return
+    else:
+        regions = [
+            (float(start), float(end))
+            for start, end in transcript.get("covered_regions") or []
+        ]
+    for c in candidates:
+        start = float(c.get("start", 0.0) or 0.0)
+        end = float(c.get("end", start) or start)
+        span = max(0.0, end - start)
+        heard = sum(max(0.0, min(end, r_end) - max(start, r_start)) for r_start, r_end in regions)
+        c["speech_unheard"] = span > 0.0 and heard / span < UNHEARD_SPEECH_MAX_COVERAGE
+
+
 def build_reaction_clips(
     unified_signals,
     prosody_frames,
@@ -2425,6 +2459,7 @@ def build_reaction_clips(
     # arousal-only behavior exactly.
     if visual_judge is not None:
         tuning = dataclass_replace(tuning, content_axis=True)
+    _mark_unheard_speech(candidates, transcript)
 
     selection_mod._assign_face_spike_rescue_eligibility(candidates, tuning)
 
@@ -2750,6 +2785,8 @@ def build_reaction_clips(
 
     def _snapshot_selection_inputs() -> None:
         """Freeze the exact candidate state entering the next selector pass."""
+        # Boundaries move between passes, so coverage is re-read each time.
+        _mark_unheard_speech(candidates, transcript)
         for candidate in candidates:
             candidate["_selection_start"] = float(candidate.get("start", 0.0))
             candidate["_selection_end"] = float(candidate.get("end", 0.0))

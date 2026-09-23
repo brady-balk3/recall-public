@@ -243,7 +243,7 @@ def extract_clip_audio(source_audio: str, start: float, end: float, temp_audio_o
         "-ar", "16000",
         temp_audio_out
     ]
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 # Caption pacing: a chunk never spans a pause longer than this, and no word's
 # display line outlives the word by more than the reading pad.

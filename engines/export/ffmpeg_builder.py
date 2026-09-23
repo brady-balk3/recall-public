@@ -89,7 +89,8 @@ def _ffmpeg_encoders() -> str:
     """`ffmpeg -encoders` stdout, or "" if the binary can't be interrogated."""
     try:
         res = subprocess.run(
-            [get_ffmpeg_path(), "-encoders"], capture_output=True, text=True
+            [get_ffmpeg_path(), "-encoders"], capture_output=True, text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         return res.stdout or ""
     except Exception:

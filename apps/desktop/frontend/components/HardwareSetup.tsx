@@ -33,6 +33,26 @@ function resultCopy(capabilities: HardwareCapabilities): string {
   return "Recall did not find a supported NVIDIA accelerator. CPU mode is active and long recordings may take considerably longer.";
 }
 
+/**
+ * A first check can legitimately take minutes: the engine loads its GPU
+ * libraries cold, often under antivirus scanning, and a VM's virtual GPU can
+ * answer slowly. So the check is never cut off, but after this long setup
+ * offers to continue while it finishes. The engine picks GPU or CPU per scan
+ * on its own, so continuing early does not lock anyone into CPU mode.
+ */
+export const HARDWARE_CHECK_SLOW_MS = 60_000;
+
+export function useSlowAfter(running: boolean, ms = HARDWARE_CHECK_SLOW_MS): boolean {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!running) return;
+    const timer = window.setTimeout(() => setSlow(true), ms);
+    return () => window.clearTimeout(timer);
+  }, [running, ms]);
+  return slow;
+}
+
 function checkedAtLabel(value: string): string {
   const time = new Date(value);
   if (Number.isNaN(time.getTime())) return "Checked recently";
@@ -88,6 +108,7 @@ export function HardwareCheckStep({
   const [state, setState] = useState<CheckState>("checking");
   const [capabilities, setCapabilities] = useState<HardwareCapabilities | null>(null);
   const [error, setError] = useState("");
+  const slow = useSlowAfter(open && state === "checking");
 
   const check = () => {
     setState("checking");
@@ -152,6 +173,12 @@ export function HardwareCheckStep({
             <small>Nothing will be installed or downloaded.</small>
           </div>
         )}
+        {state === "checking" && slow && (
+          <footer className="hardware-setup-actions">
+            <span>This is taking longer than usual. The first check can take a few minutes; Recall still uses your GPU for scans if it has one.</span>
+            <StudioButton data-hardware-primary tone="primary" onClick={complete}>Continue without waiting</StudioButton>
+          </footer>
+        )}
 
         {state === "ready" && capabilities && (
           <>
@@ -204,6 +231,7 @@ export function useHardwareCheck(apiEndpoint: string, active: boolean) {
   const [state, setState] = useState<CheckState>("checking");
   const [capabilities, setCapabilities] = useState<HardwareCapabilities | null>(null);
   const [error, setError] = useState("");
+  const slow = useSlowAfter(active && state === "checking");
 
   const check = (force = false) => {
     setState("checking");
@@ -240,7 +268,7 @@ export function useHardwareCheck(apiEndpoint: string, active: boolean) {
     };
   }, [active, apiEndpoint]);
 
-  return { state, capabilities, error, check: () => check(true) };
+  return { state, capabilities, error, slow, check: () => check(true) };
 }
 
 /** Compact system-check card used inside first-run onboarding. */

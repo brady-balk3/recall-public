@@ -3798,7 +3798,7 @@ function StudioReviewView({
               onClick={onToggleMoreCandidates}
               disabled={moreCandidatesLoading}
               aria-pressed={moreCandidatesEnabled}
-              title="Show the strongest moments saved just outside the original 15"
+              title="Show the strongest moments saved just outside the review deck"
             >
               {moreCandidatesLoading ? <RefreshCw size={13} className="is-spinning" aria-hidden="true" /> : <Sparkles size={13} aria-hidden="true" />}
               <span>More moments</span>
@@ -4509,7 +4509,7 @@ export function StudioTheaterView({
               onClick={onToggleMoreCandidates}
               disabled={moreCandidatesLoading}
               aria-pressed={moreCandidatesEnabled}
-              title="Review the strongest moments saved just outside the original 15"
+              title="Review the strongest moments saved just outside the review deck"
             >
               {moreCandidatesLoading ? <RefreshCw size={13} className="is-spinning" /> : <Sparkles size={13} />}
               <span>More moments</span>

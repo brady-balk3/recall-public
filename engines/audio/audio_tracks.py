@@ -37,6 +37,7 @@ def count_audio_streams(video_path: str) -> int:
         result = subprocess.run(
             [get_ffmpeg_path(), "-hide_banner", "-i", video_path],
             capture_output=True, text=True, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         # ffmpeg exits non-zero without an output file; the stream map is
         # still printed on stderr.
@@ -61,7 +62,7 @@ def _voiced_ratio(video_path: str, stream_index: int, offset: float) -> float:
             wav_path,
         ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       check=True, timeout=120)
+                       check=True, timeout=120, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         frames = extract_prosody(wav_path)
         if not frames:
             return 0.0

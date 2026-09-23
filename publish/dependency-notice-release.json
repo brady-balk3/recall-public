@@ -362,13 +362,6 @@
     {
       "distribution": "modelscope",
       "version": "1.38.0",
-      "path": "modelscope/modelscope/pipelines/cv/__pycache__/license_plate_detection_pipeline.cpython-312.pyc",
-      "sha256": "24dd821c8d1b6b0f15329c9a53381a1038b5359ae59951d5fbe4a20dd9093b12",
-      "bytes": 7757
-    },
-    {
-      "distribution": "modelscope",
-      "version": "1.38.0",
       "path": "modelscope/modelscope/pipelines/cv/license_plate_detection_pipeline.py",
       "sha256": "d8a09296a83de61005b2125cbe40a73563328129c3ae3892ad99532b83dde055",
       "bytes": 4602

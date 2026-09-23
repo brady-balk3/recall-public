@@ -107,6 +107,7 @@ def audio_duration(path: str) -> float:
     result = subprocess.run(
         [get_ffmpeg_path(), "-hide_banner", "-i", path, "-f", "null", "-"],
         capture_output=True, text=True, errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     matches = re.findall(r"time=(\d+):(\d+):(\d+\.\d+)", result.stderr or "")
     if not matches:
@@ -124,6 +125,7 @@ def read_slice(path: str, start: float, span: float) -> np.ndarray:
          "-ss", f"{start:.3f}", "-t", f"{span:.3f}", "-i", path,
          "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "-"],
         capture_output=True, check=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     raw = np.frombuffer(result.stdout, dtype=np.int16)
     return raw.astype(np.float32) / 32768.0

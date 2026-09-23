@@ -263,6 +263,7 @@ def _warn_if_low_resolution(video_path: str, ffmpeg_path: str, min_height: int =
             [ffprobe, "-v", "error", "-select_streams", "v:0",
              "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", video_path],
             capture_output=True, text=True, timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         dims = res.stdout.strip()
         if "x" in dims:

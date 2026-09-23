@@ -33,7 +33,8 @@
     !error "Build through build-installed.cjs to prepare GitHub release chunks"
   !endif
   recall_install_models_retry:
-    DetailPrint "Downloading and verifying Recall models. This may take several minutes."
+    SetDetailsView show
+    DetailPrint "Downloading Recall's AI models (about 12 GB). This usually takes 5-20 minutes, and the progress bar stays still during this step; each file's progress appears below."
     nsExec::ExecToLog '"$INSTDIR\resources\recall-engine\recall-engine.exe" --install-models'
     Pop $0
     StrCmp $0 "0" recall_install_models_done

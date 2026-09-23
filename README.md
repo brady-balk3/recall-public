@@ -21,7 +21,7 @@ You stay in charge. Every clip opens in a review editor where you keep or pass, 
 | **OS** | Windows 11 or Windows 10, 64-bit | No macOS or Linux build. |
 | **GPU** | NVIDIA GeForce RTX with 8 GB+ VRAM | Speech recognition, detection and the clip judges run on the GPU through CUDA 12. Keep your NVIDIA driver current. |
 | **RAM** | 32 GB (16 GB minimum) | |
-| **Disk** | 25 GB free for the install, plus room for your videos | The app takes about 7 GB and the AI models about 12 GB. A downloaded Twitch VOD needs a few GB per hour of stream. |
+| **Disk** | 35 GB free for the install, plus room for your videos | The app takes about 7 GB and the AI models about 12 GB. Setup also keeps a second ~12 GB copy of the models in its download cache, which lets updates reuse them instead of downloading again. A downloaded Twitch VOD needs a few GB per hour of stream. |
 | **Internet** | Needed for setup and for Twitch VODs | Once installed, scanning and exporting local recordings is designed to work offline. |
 
 **Without an NVIDIA GPU** Recall falls back to the CPU. That path hasn't been tested on a machine without an NVIDIA card, and scans will be much slower.
@@ -34,8 +34,6 @@ You stay in charge. Every clip opens in a review editor where you keep or pass, 
 | --- | --- | --- |
 | **Best quality** (default) | Transcribes the whole stream, reads facecam expressions, and checks on-screen text every 3 seconds. Also builds a complete searchable transcript. | Your normal choice. Slower, but it sees everything. |
 | **Smart scan** | Skips the full transcript and facecam expressions, and checks on-screen text every 6 seconds. Only the clips it picks get transcribed for captions. | A quick first pass on a long VOD. It can miss moments that are mostly talking. |
-
-> **Known issue in 0.1.0-beta.1:** Smart scan can return few or even zero clips on some videos, because without a transcript one of the judges rejects too much. Use **Best quality** until this is fixed in the next beta.
 
 ## Performance profiles
 
@@ -80,7 +78,7 @@ The large models total about 12 GB. VRAM figures are estimates from model size. 
 
 Recall runs on machines without a supported GPU, and it tells you when it's in CPU mode. Every stage, including speech recognition and the judges, falls back to the CPU. AMD and Intel GPUs aren't accelerated yet, so they use CPU mode too.
 
-CPU-only mode is **very limited**. A full Best quality scan of a multi-hour stream can take many times longer than on an NVIDIA GPU, and the judges are especially slow. Keep VODs short and expect to leave it running. (Smart scan would be faster, but see the known issue above.) This path has not been tested on a machine without an NVIDIA GPU yet.
+CPU-only mode is **very limited**. A full Best quality scan of a multi-hour stream can take many times longer than on an NVIDIA GPU, and the judges are especially slow. Use Smart scan, keep VODs short, and expect to leave it running. This path has not been tested on a machine without an NVIDIA GPU yet.
 
 ## Install
 

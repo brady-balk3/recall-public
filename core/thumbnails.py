@@ -74,6 +74,7 @@ def generate_thumbnail(
             subprocess.run(
                 cmd, check=True, timeout=30,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except Exception:
             return False

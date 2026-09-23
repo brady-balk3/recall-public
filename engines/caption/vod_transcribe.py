@@ -45,7 +45,10 @@ def transcribe_vod_regions(wav_path: str, regions, language: str = "en",
     """
     _ = settings
     model = get_whisper_model(model_size)
-    merged = {"segments": []}
+    # ``covered_regions`` tells readers which stretches were actually heard, so
+    # silence outside them is "not transcribed", not "nobody spoke". A full
+    # VOD transcript carries no such key and counts as covering everything.
+    merged = {"segments": [], "covered_regions": []}
     segment_id = 0
     total_duration = sum(max(0.0, float(end) - float(start)) for start, end in regions)
     completed_duration = 0.0
@@ -97,6 +100,7 @@ def transcribe_vod_regions(wav_path: str, regions, language: str = "en",
                 shifted_words.append(shifted_word)
             shifted["words"] = shifted_words
             merged["segments"].append(shifted)
+        merged["covered_regions"].append([start, end])
 
         completed_duration += end - start
         if progress_callback:

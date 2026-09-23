@@ -2027,7 +2027,7 @@ class ClipService:
                         "A lower-ranked moment Recall saved just outside the first review deck.",
                         json.dumps(signals), self.MORE_CANDIDATE_LABEL, None,
                         json.dumps(features) if features else None,
-                        "This moment was just outside the first 15 and stayed available for a second look.",
+                        "This moment was just outside the review deck and stayed available for a second look.",
                         candidate.get("peak_timestamp"),
                         json.dumps(breakdown) if breakdown else None,
                         features.get("reaction_auc"), None, candidate.get("scene_label"),
@@ -3943,6 +3943,7 @@ class SystemService:
             proc = _subprocess.run(
                 [ffmpeg, "-i", source_path, "-hide_banner"],
                 capture_output=True, text=True, timeout=30,
+                creationflags=getattr(_subprocess, "CREATE_NO_WINDOW", 0),
             )
             match = _re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", proc.stderr or "")
             if match:

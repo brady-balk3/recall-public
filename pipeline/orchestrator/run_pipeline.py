@@ -1890,7 +1890,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                     f"personal weight {audit_weight_text}; review it before "
                     "personalization can change future decks."
                 ) if shadow_audit else (
-                    "This moment was just outside the first 15 and stayed available "
+                    "This moment was just outside the review deck and stayed available "
                     "for a second look."
                 )
             ),

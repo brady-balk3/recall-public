@@ -78,13 +78,13 @@ export function OnboardingFlow({
   const [beat, setBeat] = useState(0);
   const [phase, setPhase] = useState<"flow" | "leaving" | "handoff">("flow");
   const hardwareMarked = useRef(false);
-  const { state: hwState, capabilities, error: hwError, check: recheck } = useHardwareCheck(apiEndpoint, open);
+  const { state: hwState, capabilities, error: hwError, slow: hwSlow, check: recheck } = useHardwareCheck(apiEndpoint, open);
   const caption: CaptionStyle = settings.captionStyle ?? DEFAULT_CAPTION_STYLE;
   const accentTheme = settings.accentTheme || "ember";
 
   const index = STEPS.findIndex((entry) => entry.id === step);
   const current = STEPS[index];
-  const machineBlocked = step === "machine" && hwState === "checking";
+  const machineBlocked = step === "machine" && hwState === "checking" && !hwSlow;
   const gpu = capabilities?.route === "nvidia_cuda";
 
   const ensureHardwareMarked = () => {
@@ -206,6 +206,7 @@ export function OnboardingFlow({
                   hwState={hwState}
                   capabilities={capabilities}
                   hwError={hwError}
+                  hwSlow={hwSlow}
                   onRecheck={recheck}
                   eta={eta}
                   gpu={gpu}
@@ -328,6 +329,7 @@ function MachineScreen({
   hwState,
   capabilities,
   hwError,
+  hwSlow,
   onRecheck,
   eta,
   gpu,
@@ -336,6 +338,7 @@ function MachineScreen({
   hwState: "checking" | "ready" | "error";
   capabilities: ReturnType<typeof useHardwareCheck>["capabilities"];
   hwError: string;
+  hwSlow: boolean;
   onRecheck: () => void;
   eta: { value: string; unit: string } | null;
   gpu: boolean;
@@ -352,7 +355,7 @@ function MachineScreen({
         <div className="onboarding-eta-big">{eta ? <>{eta.value}<small>{eta.unit}</small></> : "—"}</div>
         <div className="onboarding-eta-copy">
           <b>Estimated scan time for a 2-hour VOD</b>
-          <span>{hwState === "checking" ? "Waiting on the system check…" : `${SPEED_NAME[settings.processingMode]} · ${PERF_NAME[settings.performanceProfile]} · ${gpu ? "NVIDIA acceleration" : "CPU processing"}`}</span>
+          <span>{hwState === "checking" ? (hwSlow ? "Still checking. The first check can take a few minutes; you can continue and Recall finishes it in the background." : "Waiting on the system check…") : `${SPEED_NAME[settings.processingMode]} · ${PERF_NAME[settings.performanceProfile]} · ${gpu ? "NVIDIA acceleration" : "CPU processing"}`}</span>
           <div className="onboarding-load-meter" aria-hidden="true">{[0, 1, 2, 3, 4].map((bar) => <i key={bar} className={bar < loadBars ? "on" : ""} />)}</div>
         </div>
       </div>

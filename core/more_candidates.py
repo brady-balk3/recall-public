@@ -390,5 +390,5 @@ def partition_second_look(
 
 
 def second_look_deck_score(index: int) -> float:
-    """Descending in-tier score so Second-look cards sort under the original 15."""
+    """Descending in-tier score so Second-look cards sort under the review deck."""
     return max(0.01, 0.49 - int(index) * 0.01)

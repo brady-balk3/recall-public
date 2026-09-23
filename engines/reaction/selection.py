@@ -2173,8 +2173,13 @@ def _gate_rejection_reasons(
     # fresh VLM scans gave opposite verdicts to the same founder-kept rage
     # moment, while the other independent lanes stayed strongly positive.
     # The candidate receives no rescue here; it simply faces the normal gates.
+    # A skip from a judge that was told "(no clear speech)" about audio nobody
+    # transcribed (Smart scan outside its scout regions, or a failed ASR pass)
+    # speaks only for the frames, so it is not a categorical veto. The
+    # candidate still faces every other gate, including a semantic reject.
     if (
         _visual_verdict(c) == "skip"
+        and not c.get("speech_unheard")
         and not _content_gate_bypass(c, tuning)
         and not _strong_visual_skip_conflict(c, tuning)
     ):

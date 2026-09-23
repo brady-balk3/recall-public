@@ -1235,6 +1235,20 @@ def _migration_035_clip_origin(conn: sqlite3.Connection) -> None:
     _add_column(conn, "clips", "origin", "TEXT")
 
 
+def _migration_036_second_look_deck_wording(conn: sqlite3.Connection) -> None:
+    """Stop stored Second Look descriptions naming a 15-clip deck.
+
+    The review deck is capped at 10 (REVIEW_DECK_HARD_CAP), but descriptions
+    written under the old cap said the moment was "just outside the first 15".
+    The text is persisted per clip, so new wording alone never reaches them.
+    """
+    conn.execute(
+        "UPDATE clips SET description = REPLACE(description, "
+        "'just outside the first 15', 'just outside the review deck') "
+        "WHERE description LIKE '%just outside the first 15%'"
+    )
+
+
 MIGRATIONS: list[Migration] = [
     ("001_initial_schema", _migration_001_initial),
     ("002_job_telemetry", _migration_002_job_telemetry),
@@ -1271,6 +1285,7 @@ MIGRATIONS: list[Migration] = [
     ("033_compilation_reels", _migration_033_compilation_reels),
     ("034_compilation_muted_moments", _migration_034_compilation_muted_moments),
     ("035_clip_origin", _migration_035_clip_origin),
+    ("036_second_look_deck_wording", _migration_036_second_look_deck_wording),
 ]
 
 
