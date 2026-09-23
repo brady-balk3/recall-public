@@ -14,7 +14,19 @@ You stay in charge. Every clip opens in a review editor where you keep or pass, 
 - **Keeps you in control.** Review, trim, reframe and re-render any clip before it leaves the app.
 - **Runs entirely on your PC.** No account, no upload, no subscription. Your recordings, scans and clips stay on your machine; the network is used only to download a Twitch VOD you ask for and to fetch the app and its models during setup.
 
-Built and tested on Windows 11 with an NVIDIA GPU. The first install downloads roughly 12 GB of AI models.
+## System requirements
+
+| | Recommended | Notes |
+| --- | --- | --- |
+| **OS** | Windows 11 or Windows 10, 64-bit | No macOS or Linux build. |
+| **GPU** | NVIDIA GeForce RTX with 8 GB+ VRAM | Speech recognition, detection and the clip judges run on the GPU through CUDA 12. Keep your NVIDIA driver current. |
+| **RAM** | 32 GB (16 GB minimum) | |
+| **Disk** | 25 GB free for the install, plus room for your videos | The app takes about 7 GB and the AI models about 12 GB. A downloaded Twitch VOD needs a few GB per hour of stream. |
+| **Internet** | Needed for setup and for Twitch VODs | Once installed, scanning and exporting local recordings is designed to work offline. |
+
+**Without an NVIDIA GPU** Recall falls back to the CPU. That path hasn't been tested on a machine without an NVIDIA card, and scans will be much slower.
+
+**Tested on:** Windows 11 Pro, AMD Ryzen 7 7800X3D, 32 GB RAM, NVIDIA RTX 4070 Ti SUPER (16 GB). Other setups should work within the table above, but haven't been verified yet. If yours doesn't, please open an issue.
 
 ## Install
 
