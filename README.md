@@ -86,6 +86,13 @@ CPU-only mode is **very limited**. A full Best quality scan of a multi-hour stre
 
 Download the Windows installer from this repository's Releases page when a release is available. The small setup program downloads a checksum-verified application package from GitHub and the pinned large model weights from Hugging Face. You do not need to download model files manually. The first install needs an internet connection and enough disk space for the application, models, and your source videos.
 
+**Expect two security warnings.** Recall is new and its installer isn't code-signed yet, so Windows and your browser haven't seen it often enough to trust it automatically:
+
+- **Chrome or Edge** may say the file *"isn't commonly downloaded"*. In Chrome, open the downloads list and choose **Keep** (under the ⋮ menu if needed). In Edge, hover the download, click **⋯ → Keep**, then **Show more → Keep anyway**.
+- **Windows** may then say *"Windows protected your PC"*. Click **More info → Run anyway**.
+
+The installer checks the SHA-256 of everything it downloads before installing, and the source for every file is in this repository.
+
 Your recordings, scan data, and exported clips are stored locally. Downloading a Twitch VOD, application package, or model uses the network.
 
 ## Build from source
