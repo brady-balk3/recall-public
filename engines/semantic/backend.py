@@ -9,7 +9,7 @@ output ALWAYS parses; verdict.SemanticVerdict.from_raw handles the remaining
 semantic validation (enum membership, ranges).
 
 Model discovery is resolve_model(): a GGUF placed under
-``get_models_dir()/llm/`` enables the judge; nothing there disables it. No
+``get_downloaded_models_dir()/llm/`` enables the judge; nothing there disables it. No
 auto-download in this package — the download UX is a follow-up, and this app
 is offline-first, so absence must degrade silently (same contract as the
 yamnet burst model in engines/audio/audio_events.py).
@@ -20,7 +20,7 @@ import os
 import re
 from typing import Optional
 
-from core.bundle_paths import get_models_dir
+from core.bundle_paths import get_downloaded_models_dir
 from core.device import get_torch_device
 
 
@@ -285,7 +285,7 @@ def resolve_model() -> Optional[str]:
     stays deterministic when several models are present. The Settings model
     picker is a follow-up.
     """
-    llm_dir = os.path.join(get_models_dir(), "llm")
+    llm_dir = os.path.join(get_downloaded_models_dir(), "llm")
     if not os.path.isdir(llm_dir):
         return None
     ggufs = sorted(

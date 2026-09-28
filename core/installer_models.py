@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import sys
+import tempfile
 
 from core.model_catalog import ASR_REPO, ASR_REVISION, ASR_FILES
 from core.model_catalog import ALIGNER_REPO, ALIGNER_REVISION, ALIGNER_FILES
@@ -42,7 +44,68 @@ def installed_download_paths() -> set[str]:
     return {spec[0] for _, _, files in download_groups() for spec in files.values()}
 
 
-def install_models(root: Path, *, progress=None, groups=None) -> None:
+def _legacy_hub_cache() -> Path:
+    """The Hugging Face cache earlier installers downloaded into.
+
+    Read from the environment Setup inherited, before main() redirects the
+    cache: beta builds used the default ``~/.cache/huggingface/hub``.
+    """
+    configured = os.environ.get("HF_HUB_CACHE", "").strip()
+    if configured:
+        return Path(configured)
+    home = os.environ.get("HF_HOME", "").strip()
+    return Path(home or Path.home() / ".cache" / "huggingface") / "hub"
+
+
+def _adopt_legacy(legacy: Path, repo: str, revision: str, remote: str,
+                  destination: Path, expected: tuple[int, str]) -> bool:
+    """Take a verified pinned file out of the old cache instead of downloading it.
+
+    Moving reclaims the old copy's space in the same step; across drives it is
+    copied, verified, and the source removed. Only exact pinned bytes are taken.
+    """
+    snapshot = legacy / f"models--{repo.replace('/', '--')}" / "snapshots" / revision / remote
+    try:
+        source = Path(os.path.realpath(snapshot))
+        if not matches(source, expected):
+            return False
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.replace(source, destination)
+        except OSError:
+            handle, temporary = tempfile.mkstemp(prefix=".recall-model-", dir=destination.parent)
+            os.close(handle)
+            try:
+                shutil.copyfile(source, temporary)
+                if not matches(Path(temporary), expected):
+                    return False
+                os.replace(temporary, destination)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+            source.unlink()
+        if snapshot.is_symlink():
+            snapshot.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def _tidy_legacy(legacy: Path, groups) -> None:
+    """Drop the old cache's Recall repos once only our pinned revision remains."""
+    for repo, revision, _ in groups:
+        name = f"models--{repo.replace('/', '--')}"
+        folder = legacy / name
+        try:
+            snapshots = {entry.name for entry in (folder / "snapshots").iterdir()}
+        except OSError:
+            continue
+        if snapshots <= {revision}:
+            shutil.rmtree(folder, ignore_errors=True)
+            shutil.rmtree(legacy / ".locks" / name, ignore_errors=True)
+
+
+def install_models(root: Path, *, progress=None, groups=None, legacy_cache: Path | None = None) -> None:
     from filelock import FileLock
 
     root = root.absolute()
@@ -50,13 +113,17 @@ def install_models(root: Path, *, progress=None, groups=None) -> None:
         raise ValueError("Model installation directory must not be redirected")
     root.mkdir(parents=True, exist_ok=True)
     # The installer owns this operation; the API is never started in this process.
+    groups = download_groups() if groups is None else groups
     with FileLock(str(root.parent / "model-install.lock"), timeout=0):
-        for repo, revision, files in (download_groups() if groups is None else groups):
+        for repo, revision, files in groups:
             for remote, (relative, size, digest) in files.items():
                 destination = root / relative
                 if destination.resolve() != destination or not destination.is_relative_to(root):
                     raise ValueError("Redirected model destination")
-                if matches(destination, (size, digest)):
+                if matches(destination, (size, digest)) or (
+                        legacy_cache is not None
+                        and _adopt_legacy(legacy_cache, repo, revision, remote,
+                                          destination, (size, digest))):
                     if progress:
                         progress({"phase": "ready", "file": relative})
                     continue
@@ -73,6 +140,8 @@ def install_models(root: Path, *, progress=None, groups=None) -> None:
                     os.replace(downloaded, destination)
                 if not matches(destination, (size, digest)):
                     raise ValueError("Installed model verification failed")
+        if legacy_cache is not None:
+            _tidy_legacy(legacy_cache, groups)
 
 
 def _installer_streams():
@@ -200,9 +269,18 @@ class _SetupLog:
 
 
 def main() -> int:
-    from core.bundle_paths import get_resource_dir
+    from core.bundle_paths import get_downloaded_models_dir
 
     _installer_streams()
+    root = Path(get_downloaded_models_dir())
+    # Download through a private cache beside the models and delete it once
+    # every file is verified, so setup leaves one copy of each model rather
+    # than a second 12 GB in the user's Hugging Face cache. A failed run keeps
+    # it so Retry resumes partial downloads.
+    legacy = _legacy_hub_cache()
+    download_cache = root.parent / "model-download-cache"
+    os.environ["HF_HOME"] = str(download_cache)
+    os.environ["HF_HUB_CACHE"] = str(download_cache / "hub")
     # Setup users cannot act on the Windows symlink advice; it only adds noise.
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
     try:
@@ -214,7 +292,9 @@ def main() -> int:
     print(f"Downloading {report.total} model files (about 12 GB). "
           "This usually takes 5-20 minutes.", flush=True)
     try:
-        install_models(Path(get_resource_dir()) / "models", progress=report)
+        install_models(root, progress=report, legacy_cache=legacy)
+        report.close()
+        shutil.rmtree(download_cache, ignore_errors=True)
         print("Recall models verified and ready.", flush=True)
         return 0
     except Exception as exc:

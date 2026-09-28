@@ -21,7 +21,7 @@ You stay in charge. Every clip opens in a review editor where you keep or pass, 
 | **OS** | Windows 11 or Windows 10, 64-bit | No macOS or Linux build. |
 | **GPU** | NVIDIA GeForce RTX with 8 GB+ VRAM | Speech recognition, detection and the clip judges run on the GPU through CUDA 12. Keep your NVIDIA driver current. |
 | **RAM** | 32 GB (16 GB minimum) | |
-| **Disk** | 35 GB free for the install, plus room for your videos | The app takes about 7 GB and the AI models about 12 GB. Setup also keeps a second ~12 GB copy of the models in its download cache, which lets updates reuse them instead of downloading again. A downloaded Twitch VOD needs a few GB per hour of stream. |
+| **Disk** | 35 GB free during setup, plus room for your videos | The app takes about 7 GB and the AI models about 12 GB, about 19 GB in total once setup finishes. Setup briefly needs room for a second copy of the models while it downloads and verifies them, then deletes it. The models are kept in `%LOCALAPPDATA%\Recall\models`, so updates reuse them instead of downloading again; uninstalling removes them. A downloaded Twitch VOD needs a few GB per hour of stream. |
 | **Internet** | Needed for setup and for Twitch VODs | Once installed, scanning and exporting local recordings is designed to work offline. |
 
 **Without an NVIDIA GPU** Recall falls back to the CPU. That path hasn't been tested on a machine without an NVIDIA card, and scans will be much slower.

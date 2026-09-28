@@ -26,7 +26,7 @@ import re as _re
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from core.bundle_paths import get_data_dir, get_models_dir
+from core.bundle_paths import get_data_dir, get_downloaded_models_dir
 from core.device import get_torch_device
 from engines.semantic import backend as text_backend
 from engines.semantic import judge as text_judge
@@ -151,7 +151,7 @@ def resolve_models() -> Optional[Tuple[str, str]]:
             return os.path.abspath(explicit_model), os.path.abspath(explicit_mmproj)
         return None
 
-    vlm_dir = os.path.join(get_models_dir(), "vlm")
+    vlm_dir = os.path.join(get_downloaded_models_dir(), "vlm")
     if not os.path.isdir(vlm_dir):
         return None
     pairs = []

@@ -49,6 +49,35 @@ def get_models_dir() -> str:
     return os.path.join(get_resource_dir(), "models")
 
 
+def is_installed_build() -> bool:
+    """True for the setup-installed app, whose installer leaves a marker file.
+
+    The engine runs from ``resources/recall-engine/`` and the marker sits in
+    ``resources/``. Portable and dev builds have no marker.
+    """
+    if not is_frozen():
+        return False
+    resources = os.path.dirname(os.path.dirname(os.path.abspath(sys.executable)))
+    return os.path.isfile(os.path.join(resources, "recall-installation.json"))
+
+
+def get_downloaded_models_dir() -> str:
+    """Root for the large models setup downloads (ASR, aligner, text and visual judge).
+
+    An installed build keeps them per user in ``%LOCALAPPDATA%/Recall/models``, outside
+    the install directory, so an upgrade (which replaces that directory) keeps
+    them. Small models stay bundled under ``get_models_dir()``. Portable, dev and
+    explicit ``RECALL_MODELS_DIR`` roots hold everything in one place.
+    """
+    configured = _configured_root("RECALL_MODELS_DIR")
+    if configured:
+        return configured
+    local = os.environ.get("LOCALAPPDATA", "").strip()
+    if local and os.path.isabs(local) and is_installed_build():
+        return os.path.join(os.path.normpath(local), "Recall", "models")
+    return get_models_dir()
+
+
 def get_engines_root() -> str:
     """Root of the native engines package tree."""
     return os.path.join(get_resource_dir(), "engines")
@@ -119,7 +148,7 @@ def get_speech_models_dir() -> str:
 
 
 def _first_holding(marker: str, *candidates: str) -> str:
-    """First candidate under models/ that actually contains ``marker``.
+    """First candidate under the downloaded-models root that contains ``marker``.
 
     Existence of the DIRECTORY is not enough: ``models/asr`` already exists for
     an unrelated checkpoint, so a bare isdir() check silently resolves to an
@@ -127,7 +156,7 @@ def _first_holding(marker: str, *candidates: str) -> str:
     error pointing at the wrong path. Falling back to the first candidate keeps
     that error naming where the file is supposed to be.
     """
-    models = get_models_dir()
+    models = get_downloaded_models_dir()
     for name in candidates:
         if os.path.exists(os.path.join(models, name, marker)):
             return os.path.join(models, name)

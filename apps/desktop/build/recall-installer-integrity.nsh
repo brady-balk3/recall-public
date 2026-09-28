@@ -34,7 +34,7 @@
   !endif
   recall_install_models_retry:
     SetDetailsView show
-    DetailPrint "Downloading Recall's AI models (about 12 GB). This usually takes 5-20 minutes, and the progress bar stays still during this step; each file's progress appears below."
+    DetailPrint "Downloading Recall's AI models (about 12 GB, kept in your user folder so updates reuse them). This usually takes 5-20 minutes, and the progress bar stays still during this step; each file's progress appears below."
     nsExec::ExecToLog '"$INSTDIR\resources\recall-engine\recall-engine.exe" --install-models'
     Pop $0
     StrCmp $0 "0" recall_install_models_done
@@ -44,4 +44,14 @@
       SetErrorLevel 2
       Quit
     recall_install_models_done:
+!macroend
+!macro customUnInstall
+  ; Models live per user outside $INSTDIR so upgrades keep them. Remove them
+  ; only on a real uninstall; an upgrade runs this uninstaller too.
+  ${ifNot} ${isUpdated}
+    RMDir /r "$LOCALAPPDATA\Recall\models"
+    RMDir /r "$LOCALAPPDATA\Recall\model-download-cache"
+    Delete "$LOCALAPPDATA\Recall\model-install.lock"
+    RMDir "$LOCALAPPDATA\Recall"
+  ${endIf}
 !macroend
