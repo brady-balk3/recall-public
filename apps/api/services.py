@@ -1076,7 +1076,7 @@ class ClipService:
         ``{index}`` is the clip's persistent per-VOD number, not its temporary
         position in this export request.
         """
-        from core.export_presets import ensure_unique, render_filename
+        from core.export_presets import ensure_unique, place_export, render_filename
         from engines.export.renderer import FFmpegCancelled
 
         os.makedirs(dest_folder, exist_ok=True)
@@ -1273,7 +1273,7 @@ class ClipService:
             )
             dest_name = ensure_unique(dest_folder, stem, taken)
             try:
-                shutil.copy2(src, os.path.join(dest_folder, dest_name))
+                place_export(src, os.path.join(dest_folder, dest_name))
             except Exception:
                 errors += 1
                 failed.append({

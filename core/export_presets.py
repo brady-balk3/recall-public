@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from typing import Optional
 
 from core.source_date import normalize_source_date
@@ -86,6 +87,36 @@ def render_filename(
     else:
         rendered = f"{tokens['date']}_clip-{clip_number}_{safe_title}"
     return sanitize_filename(rendered, original_stem or f"clip-{index}")
+
+
+def _in_onedrive(path: str) -> bool:
+    """True when ``path`` sits inside a OneDrive-synced folder."""
+    target = os.path.normcase(os.path.abspath(path))
+    for name in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        root = os.environ.get(name, "").strip()
+        if root and target.startswith(os.path.normcase(os.path.abspath(root)) + os.sep):
+            return True
+    return False
+
+
+def place_export(source: str, destination: str) -> str:
+    """Put a finished render into a creator's folder without storing it twice.
+
+    A hard link is a second name for the same bytes: the creator's folder gets
+    an ordinary MP4 and the disk holds one copy. Deleting either name leaves the
+    other intact, and re-renders publish a new file over Recall's name, so a
+    sent clip never changes after the fact. Falls back to a real copy where a
+    link can't exist (another drive, FAT/exFAT, network shares) and inside
+    OneDrive, which does not sync links reliably. Returns "linked" or "copied".
+    """
+    if not _in_onedrive(destination):
+        try:
+            os.link(source, destination)
+            return "linked"
+        except OSError:
+            pass
+    shutil.copy2(source, destination)
+    return "copied"
 
 
 def ensure_unique(dest_folder: str, stem: str, taken: set) -> str:

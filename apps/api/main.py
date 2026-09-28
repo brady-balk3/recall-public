@@ -1097,7 +1097,7 @@ def save_compilation_reel(project_id: str, request: SaveCompilationReelRequest):
                 detail="Rebuild the montage first — this file is the previous version.",
             )
 
-        from core.export_presets import sanitize_filename
+        from core.export_presets import place_export, sanitize_filename
 
         folder = os.path.abspath(str(request.dest_folder))
         os.makedirs(folder, exist_ok=True)
@@ -1107,7 +1107,7 @@ def save_compilation_reel(project_id: str, request: SaveCompilationReelRequest):
         while os.path.exists(destination):
             destination = os.path.join(folder, f"{stem}_{index}.mp4")
             index += 1
-        shutil.copy2(str(source), destination)
+        place_export(str(source), destination)
         return {"path": destination, "project_id": project_id}
 
     return _compilation_project_call(run)
