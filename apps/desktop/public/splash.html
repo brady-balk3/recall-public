@@ -5,27 +5,24 @@
     <title>Recall</title>
     <style>
       @font-face {
-        font-family: "Inter";
+        font-family: "Sora";
+        font-style: normal;
+        font-weight: 100 800;
+        font-display: block;
+        src: url("./fonts/Sora.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "Geist";
         font-style: normal;
         font-weight: 100 900;
         font-display: block;
-        src: url("./fonts/InterVariable.woff2") format("woff2");
-      }
-      @font-face {
-        font-family: "Bricolage Grotesque";
-        font-style: normal;
-        font-weight: 200 800;
-        font-display: block;
-        src: url("./fonts/BricolageGrotesque.woff2") format("woff2");
+        src: url("./fonts/Geist.woff2") format("woff2");
       }
 
       :root {
-        --bg: #16131A;
-        --surface: #131017;
-        --ink: #F6F0E9;
-        --text-3: #968E86;
-        --mark: #F6F0E9;
-        --mark-muted: #CFC6BD;
+        --ink: #F4F4F5;
+        --text-3: #8A8A92;
+        --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
       }
 
       * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -48,90 +45,72 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        /* Warm dark base with a subtle amber wash bleeding up from centre */
+        /* Black like the app icon, lifted a touch where the moment lands. */
         background:
-          radial-gradient(120% 90% at 50% 38%, rgba(246,240,233,0.055) 0%, rgba(246,240,233,0) 55%),
-          radial-gradient(140% 120% at 50% 120%, #1B1620 0%, var(--surface) 70%);
-        border-radius: 12px;
-        /* Hairline so the frameless window reads as an intentional card */
-        box-shadow: inset 0 0 0 1px rgba(246,240,233,0.06);
+          radial-gradient(90% 70% at 50% 34%, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 60%),
+          linear-gradient(180deg, #111113 0%, #050506 100%);
+        border-radius: 14px;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
         opacity: 0;
-        animation: rise 520ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        animation: fade 360ms var(--ease-out) forwards;
       }
 
-      /* Fine grain so the gradient never looks flat/banded */
+      /* Fine grain so the gradient never bands. */
       .stage::after {
         content: "";
         position: absolute;
         inset: 0;
-        border-radius: 12px;
+        border-radius: 14px;
         pointer-events: none;
         opacity: 0.035;
         background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
       }
 
-      .mark-wrap {
-        position: relative;
-        width: 104px;
-        height: 104px;
-        display: grid;
-        place-items: center;
-      }
+      /* The mark's own motion (prototypes/logo/final): the corners close in,
+         the dots surface one by one, then the moment pulls into focus and glows. */
+      .mark { width: 96px; height: 96px; overflow: visible; }
 
-      /* One quiet pool of light, not an ambient pulse. */
-      .mark-wrap::before {
-        content: "";
-        position: absolute;
-        width: 150px;
-        height: 150px;
-        border-radius: 50%;
-        background: radial-gradient(circle, rgba(246,240,233,0.16) 0%, rgba(246,240,233,0) 68%);
-        filter: blur(6px);
-        opacity: 0;
-        transform: scale(0.94);
-        animation: lightIn 480ms 90ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-      }
+      .corner { animation: cornerIn 620ms var(--ease-out) both; }
+      .corner-in { --dx: -10px; --dy: 10px; }
+      .corner-out { --dx: 10px; --dy: -10px; animation-delay: 70ms; }
 
-      .mark {
-        position: relative;
-        width: 112px;
-        height: 112px;
-        background: var(--mark);
-        -webkit-mask: url("./recall_logo_orange_mark_transparent.png") center / contain no-repeat;
-        mask: url("./recall_logo_orange_mark_transparent.png") center / contain no-repeat;
-        filter: drop-shadow(0 6px 18px rgba(246,240,233,0.12));
-        animation: markIn 440ms cubic-bezier(0.16, 1, 0.3, 1) both;
+      .dot {
+        transform-box: fill-box;
+        transform-origin: center;
+        animation: dotIn 480ms cubic-bezier(0.3, 1.5, 0.5, 1) both;
+        animation-delay: calc(280ms + var(--i) * 110ms);
       }
+      .moment { animation-name: dotIn, focus; animation-duration: 480ms, 520ms; animation-timing-function: cubic-bezier(0.3, 1.5, 0.5, 1), var(--ease-out); }
+      .glow { animation: fade 900ms ease 620ms both; }
 
       .wordmark {
-        margin-top: 26px;
-        font-family: "Bricolage Grotesque", "Inter", system-ui, sans-serif;
+        margin-top: 22px;
+        font-family: "Sora", system-ui, sans-serif;
         font-weight: 600;
         font-size: 30px;
-        letter-spacing: 0.28em;
-        text-indent: 0.28em; /* optically re-centre the tracked text */
+        letter-spacing: -0.055em;
+        line-height: 1;
         color: var(--ink);
-        animation: fadeUp 420ms 80ms cubic-bezier(0.16, 1, 0.3, 1) both;
+        animation: rise 460ms 560ms var(--ease-out) both;
       }
 
       .tagline {
-        margin-top: 8px;
-        font-family: "Inter", system-ui, sans-serif;
-        font-weight: 500;
+        margin-top: 10px;
+        font-family: "Geist", system-ui, sans-serif;
+        font-weight: 450;
         font-size: 12.5px;
-        letter-spacing: 0.01em;
         color: var(--text-3);
-        animation: fadeUp 420ms 130ms cubic-bezier(0.16, 1, 0.3, 1) both;
+        animation: rise 460ms 640ms var(--ease-out) both;
       }
 
       .loader {
-        margin-top: 34px;
-        width: 168px;
-        height: 3px;
-        border-radius: 3px;
+        margin-top: 30px;
+        width: 148px;
+        height: 2px;
+        border-radius: 2px;
         overflow: hidden;
-        background: rgba(246,240,233,0.08);
-        animation: fadeUp 420ms 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+        background: rgba(255,255,255,0.08);
+        animation: rise 460ms 720ms var(--ease-out) both;
       }
 
       .loader::before {
@@ -139,56 +118,60 @@
         display: block;
         width: 40%;
         height: 100%;
-        border-radius: 3px;
-        background: linear-gradient(90deg, rgba(246,240,233,0) 0%, var(--mark-muted) 52%, var(--mark) 100%);
+        border-radius: 2px;
+        background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.55) 60%, #fff 100%);
         animation: slide 1.2s linear infinite;
       }
 
       .status {
-        margin-top: 16px;
-        font-family: "Inter", system-ui, sans-serif;
+        margin-top: 14px;
+        font-family: "Geist", system-ui, sans-serif;
         font-weight: 500;
         font-size: 11px;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.02em;
         color: var(--text-3);
         opacity: 0.72;
-        animation: fadeUp 420ms 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+        animation: rise 460ms 760ms var(--ease-out) both;
       }
 
-      @keyframes rise {
-        from { opacity: 0; }
-        to   { opacity: 1; }
-      }
-      @keyframes markIn {
-        from { opacity: 0; transform: scale(0.96); }
-        to   { opacity: 1; transform: scale(1); }
-      }
-      @keyframes fadeUp {
-        from { opacity: 0; transform: translateY(6px); }
-        to   { opacity: 1; transform: translateY(0); }
-      }
-      @keyframes lightIn {
-        from { transform: scale(0.94); opacity: 0; }
-        to   { transform: scale(1); opacity: 1; }
-      }
+      @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes cornerIn { from { opacity: 0; translate: var(--dx) var(--dy); } }
+      @keyframes dotIn { from { opacity: 0; transform: translate(-40%, 40%) scale(0.2); } }
+      @keyframes focus { from { filter: blur(2.5px); } to { filter: blur(0); } }
+      @keyframes rise { from { opacity: 0; transform: translateY(5px); } }
       @keyframes slide {
         0%   { transform: translateX(-120%); }
         100% { transform: translateX(370%); }
       }
 
       @media (prefers-reduced-motion: reduce) {
-        .stage, .mark, .wordmark, .tagline, .loader, .status { animation-duration: 1ms !important; }
-        .mark-wrap::before { animation: none; opacity: 0.7; transform: none; }
+        .stage, .corner, .dot, .glow, .wordmark, .tagline, .loader, .status { animation: none; opacity: 1; }
         .loader::before { animation: slide 2.2s linear infinite; }
       }
     </style>
   </head>
   <body>
     <div class="stage">
-      <div class="mark-wrap">
-        <span class="mark" aria-hidden="true"></span>
-      </div>
-      <div class="wordmark">RECALL</div>
+      <!-- Keep in sync with frontend/components/RecallMark.tsx and build/icon.svg. -->
+      <svg class="mark" viewBox="0 0 100 100" fill="none" aria-hidden="true">
+        <defs>
+          <filter id="g" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="6" /></filter>
+          <filter id="b0" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="2.2" /></filter>
+          <filter id="b1" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="1.1" /></filter>
+          <radialGradient id="m" cx="40%" cy="36%" r="72%">
+            <stop offset="0" stop-color="#FFFFFF" />
+            <stop offset=".62" stop-color="#F2F2F4" />
+            <stop offset="1" stop-color="#C9C9D0" />
+          </radialGradient>
+        </defs>
+        <g class="glow"><circle cx="65" cy="35" r="16.25" fill="#fff" opacity=".55" filter="url(#g)" /></g>
+        <path class="corner corner-in" d="M43 84.2H30A14.2 14.2 0 0 1 15.8 70V57" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" />
+        <path class="corner corner-out" d="M52 13.8H65A21.2 21.2 0 0 1 86.2 35V48" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" />
+        <g class="dot" style="--i:0"><circle cx="30" cy="70" r="5.5" fill="#fff" opacity=".34" filter="url(#b0)" /></g>
+        <g class="dot" style="--i:1"><circle cx="47.5" cy="52.5" r="8" fill="#fff" opacity=".55" filter="url(#b1)" /></g>
+        <circle class="dot moment" style="--i:2" cx="65" cy="35" r="12.5" fill="url(#m)" />
+      </svg>
+      <div class="wordmark">Recall</div>
       <div class="tagline">Your best moments, found.</div>
       <div class="loader"></div>
       <div class="status">Starting the engine…</div>

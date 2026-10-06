@@ -1,0 +1,182 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+   Styles for the vendored OpenCut editor (MIT, see ./LICENSE).
+
+   OpenCut is built on Tailwind v4 + shadcn tokens. Everything here is scoped
+   under .oc-root (the editor surface, and the body-level host its menus and
+   dialogs portal into), so none of it reaches the rest of Recall:
+   - theme values are inlined into the utilities, not declared on :root,
+     so Tailwind's --ease-out / --radius-* never shadow Recall's tokens;
+   - utilities and the preflight are nested under .oc-root, which also lets
+     them outrank Recall's unlayered element rules;
+   - shadcn's colour tokens are re-pointed at Recall's, so the editor follows
+     the accent and light/dark like every other screen. */
+@import "tailwindcss/theme.css" theme(inline);
+@import "./preflight.scoped.css";
+@source "./src";
+@plugin "tailwindcss-animate";
+
+@custom-variant dark (&:where([data-theme="dark"] *));
+
+.oc-root {
+  @tailwind utilities source(none);
+}
+
+.oc-root {
+  --background: var(--bg);
+  --foreground: var(--t1);
+  --card: var(--glass);
+  --card-foreground: var(--t1);
+  --popover: var(--glass-strong);
+  --popover-hover: var(--fill-2);
+  --popover-foreground: var(--t1);
+  --primary: var(--h2);
+  --primary-foreground: var(--heat-ink);
+  --secondary: var(--heat-soft);
+  --secondary-border: var(--heat-line);
+  --secondary-foreground: var(--t1);
+  --muted: var(--fill-3);
+  --muted-foreground: var(--t3);
+  --accent: var(--fill-2);
+  --accent-foreground: var(--t1);
+  --destructive: var(--danger);
+  --destructive-foreground: #FFFFFF;
+  --constructive: var(--keep);
+  --constructive-foreground: #FFFFFF;
+  --caution: var(--maybe);
+  --caution-foreground: #1A1A1A;
+  --border: var(--stroke);
+  --input: var(--fill);
+  --ring: var(--stroke-2);
+  --chart-1: var(--info);
+  --chart-2: var(--keep);
+  --chart-3: var(--maybe);
+  --chart-4: var(--h2);
+  --chart-5: var(--live);
+  --sidebar: var(--glass);
+  --sidebar-background: var(--glass);
+  --sidebar-foreground: var(--t1);
+  --sidebar-primary: var(--t1);
+  --sidebar-primary-foreground: var(--bg);
+  --sidebar-accent: var(--fill-3);
+  --sidebar-accent-foreground: var(--t1);
+  --sidebar-border: var(--stroke);
+  --sidebar-ring: var(--stroke-2);
+
+  color: var(--foreground);
+  font-family: var(--f-ui);
+  overscroll-behavior-x: contain;
+}
+
+/* Panels sit a step up from the editor floor. */
+.oc-root .panel {
+  --background: var(--glass);
+  --card: var(--glass);
+  --input: var(--fill-2);
+}
+
+.oc-root *,
+.oc-root ::before,
+.oc-root ::after {
+  border-color: var(--border);
+  outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
+}
+.oc-root ::selection {
+  background: color-mix(in oklab, var(--primary) 35%, transparent);
+  color: var(--primary-foreground);
+}
+
+/* The portal host: a body-level layer for OpenCut's menus, dialogs and drag
+   ghosts, outside any backdrop-filter that would trap position: fixed. */
+.oc-portal-host {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+}
+.oc-portal-host > * { pointer-events: auto; }
+
+@theme inline {
+  --breakpoint-xs: 30rem;
+  --font-sans: var(--f-ui);
+  --font-mono: var(--f-mono);
+  --text-xs: 0.72rem;
+  --text-sm: 0.79rem;
+  --text-base: 0.92rem;
+  --text-base--line-height: calc(1.5 / 0.95);
+  --text-xs--line-height: calc(1 / 0.8);
+  --radius-lg: 0.82rem;
+  --radius-md: 0.65rem;
+  --radius-sm: 0.35rem;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-hover: var(--popover-hover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-border: var(--secondary-border);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-constructive: var(--constructive);
+  --color-constructive-foreground: var(--constructive-foreground);
+  --color-caution: var(--caution);
+  --color-caution-foreground: var(--caution-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar-background);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+  @keyframes accordion-down {
+    from { height: 0; }
+    to { height: var(--radix-accordion-content-height); }
+  }
+  @keyframes accordion-up {
+    from { height: var(--radix-accordion-content-height); }
+    to { height: 0; }
+  }
+}
+
+@utility scrollbar-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+}
+@utility scrollbar-x-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar:horizontal { display: none; }
+}
+@utility scrollbar-y-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar:vertical { display: none; }
+}
+@utility scrollbar-thin {
+  &::-webkit-scrollbar { width: 7px; height: 7px; }
+  &::-webkit-scrollbar-track { background: transparent; }
+  &::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  &::-webkit-scrollbar-thumb:hover { background: var(--muted-foreground); }
+}

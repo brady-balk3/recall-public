@@ -1,0 +1,57 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Recall theme entry point. Imported once from main.tsx, before the legacy
+   stylesheets, so they can read every token.
+
+   Fonts are bundled (the renderer's CSP allows only 'self'), all OFL:
+   Sora for headlines and big numbers, Geist for UI text, Geist Mono for
+   timecodes, Archivo (with its width axis) for burned-in caption previews. */
+@import "@fontsource-variable/sora/wght.css";
+@import "@fontsource-variable/geist/wght.css";
+@import "@fontsource-variable/geist-mono/wght.css";
+@import "@fontsource-variable/archivo/wdth.css";
+
+@import "./tokens.css";
+@import "./bridge.css";
+@import "./glass.css";
+
+body {
+  background-color: var(--bg);
+  color: var(--t1);
+  font-family: var(--f-ui);
+}
+
+/* Headlines and big numbers: Sora, bold, tight, sentence case. */
+.disp {
+  font-family: var(--f-disp);
+  font-weight: var(--disp-w);
+  letter-spacing: var(--disp-track);
+  line-height: 1.02;
+  text-transform: none;
+  text-wrap: balance;
+}
+
+/* Numbers are tabular everywhere they're compared. */
+.num,
+.t-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Burned-in caption previews: condensed caps, never the UI face. */
+.cap-face {
+  font-family: var(--f-cap);
+  font-stretch: 62%;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+/* A clip poster fills its frame. Every poster well (cards, deck strips, the
+   milestone row, the recap) is position: relative with overflow hidden; without
+   this the 480x854 JPEG renders at natural size and shows only its corner. */
+.rl-media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; -webkit-user-drag: none; }
+
+/* The app sits above the footage glow. */
+#app-container {
+  position: relative;
+  z-index: 1;
+}

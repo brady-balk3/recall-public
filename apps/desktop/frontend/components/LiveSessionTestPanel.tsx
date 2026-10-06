@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Brady Balk
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Clock, Film, FolderOpen, Play, Target, Video, X } from "../lib/icons";
+import { Broadcast, Check, Film, FolderOpen, Play, Target, Video, X } from "../lib/icons";
 import RememberHotkeySetting, { displayHotkey } from "./RememberHotkeySetting";
 import { fmtClock } from "../lib/format";
 import { plural } from "../lib/copy";
@@ -381,278 +381,205 @@ export default function RecallLivePanel({ onScanRecording, sessions = [] }: Live
     setMessage(null);
   };
 
-  return (
-    <div className="rlive-body">
-      <section className={`rlive-stage ${active ? "is-live" : ""}`} aria-label="Recall Live session">
-        {!session && (
-          <div className="rlive-console">
-            <div>
-              <h2>What are you marking?</h2>
-              <p className="rlive-console-q">This is how Recall lines your marks up with the recording later.</p>
+  const resetSession = () => { setSession(null); setVodUrl(""); setPlan(null); setMessage(null); void loadEarlier(); };
+  const keys = (hotkey && hotkey !== "Remember button" ? hotkey : "").split(" + ").filter(Boolean);
+  const markList = (
+    <div className="marks">
+      {(active ? [...marks].reverse() : marks).map((mark, index) => {
+        const ordinal = active ? markCount - index : index + 1;
+        const offset = (new Date(mark.occurred_at_utc).getTime() - startedAt(session)) / 1000;
+        const outside = unmappedIds.has(mark.id);
+        return (
+          <div key={mark.id} className={`mark ${outside ? "is-outside" : ""}`}>
+            <span className="mark-n num">#{String(ordinal).padStart(2, "0")}</span>
+            <b className="tcode num">{fmtClock(Math.max(0, offset))}</b>
+            <span className="t3">
+              {clockOfDay(mark.occurred_at_utc)} · {mark.source === "recall_live_tab" ? "button" : "shortcut"}
+              {outside && <em className="mark-out"> · outside the recording</em>}
+            </span>
+            <button
+              type="button" className="icon-btn"
+              disabled={removing !== null}
+              aria-label={`Remove the mark at ${fmtClock(Math.max(0, offset))}`}
+              onClick={() => void removeMark(mark.id)}
+            >
+              <X aria-hidden="true" />
+            </button>
+          </div>
+        );
+      })}
+      {!markCount && (
+        <div className="marks-empty">
+          <b>No marks yet</b>
+          <small className="t3">
+            {active && hotkey
+              ? `Press ${hotkey} the moment something happens. Every mark lands here.`
+              : "Every moment you mark lands here as you make it."}
+          </small>
+        </div>
+      )}
+    </div>
+  );
+
+  if (!session) {
+    const marks = [0.18, 0.41, 0.63, 0.86];
+    return (
+      <div className="live-idle">
+        <section className="live-explain glass" aria-label="How a mark works">
+          <div className="le-copy">
+            <span className="eyebrow">How a mark works</span>
+            <h2 className="disp">Press your key when it pops off.</h2>
+            <p className="t2">Recall keeps the 90 seconds before and the 30 after. Only those windows get scanned, so a 4 hour stream reads in minutes.</p>
+            <div className="le-key">
+              {keys.length ? (
+                <div className="caps">{keys.map((key, index) => <span key={key} className="caps-k">{index > 0 && <span className="plus">+</span>}<kbd className="kcap">{key}</kbd></span>)}</div>
+              ) : <b>Use the Remember button</b>}
+              <small className="t3">Works in-game, even with Recall in the background.</small>
             </div>
+          </div>
+          <div className="le-viz" aria-hidden="true">
+            <div className="hm-viz">
+              {marks.map((at) => <span key={at} className="win" style={{ left: `calc(${at * 100}% - 9%)`, width: "12%" }} />)}
+              {marks.map((at) => <span key={`p${at}`} className="pin" style={{ left: `${at * 100}%` }}><i /></span>)}
+              <span className="le-span before" style={{ left: `calc(${marks[1] * 100}% - 9%)`, width: "9%" }}>90s</span>
+              <span className="le-span after" style={{ left: `${marks[1] * 100}%`, width: "3%" }}>30s</span>
+            </div>
+            <div className="le-axis num"><span>0:00</span><span>1:00</span><span>2:00</span><span>3:00</span><span>4:00</span></div>
+            <div className="hm-legend"><span><i className="lg-pin" />Your mark</span><span><i className="lg-win" />What gets scanned</span></div>
+          </div>
+        </section>
 
-            <div className="rlive-sources" role="radiogroup" aria-label="What you are marking">
-              <button
-                type="button" role="radio" aria-checked={markSource === "stream"}
-                className={`rlive-source ${markSource === "stream" ? "is-selected" : ""}`}
-                onClick={() => setMarkSource("stream")}
-              >
-                <span className="rlive-source-title">
-                  <Video size={15} aria-hidden="true" />A stream, live right now
-                  <i className="rlive-source-mark" aria-hidden="true" />
-                </span>
-                <em>Start any time. Attach the VOD when it publishes and Recall anchors your marks to the real stream clock.</em>
+        <div className="live-grid">
+          <section className="panel glass live-setup" aria-label="Start a Recall Live session">
+            <span className="lbl" id="live-kind">What are you marking?</span>
+            <div className="optgrid" role="radiogroup" aria-labelledby="live-kind">
+              <button type="button" role="radio" aria-checked={markSource === "stream"} className={`opt ${markSource === "stream" ? "on" : ""}`} onClick={() => setMarkSource("stream")}>
+                <b><Video aria-hidden="true" />A stream, live right now</b>
+                <small>Start any time. Attach the VOD when it publishes and Recall lines your marks up with the real stream clock.</small>
               </button>
-              <button
-                type="button" role="radio" aria-checked={markSource === "recording"}
-                className={`rlive-source ${markSource === "recording" ? "is-selected" : ""}`}
-                onClick={() => setMarkSource("recording")}
-              >
-                <span className="rlive-source-title">
-                  <Play size={15} aria-hidden="true" />A recording you are playing
-                  <i className="rlive-source-mark" aria-hidden="true" />
-                </span>
-                <em>Start the file at 0:00 and start Recall at the same moment. Your marks land on the file directly.</em>
+              <button type="button" role="radio" aria-checked={markSource === "recording"} className={`opt ${markSource === "recording" ? "on" : ""}`} onClick={() => setMarkSource("recording")}>
+                <b><Play aria-hidden="true" />A recording you are playing</b>
+                <small>Start the file at 0:00 and start Recall at the same moment. Your marks land on the file directly.</small>
               </button>
             </div>
-
-            <RememberHotkeySetting />
-
-            <div className="rlive-start">
-              <button type="button" className="cta-accent" disabled={busy !== null} onClick={start}>
-                <Target size={15} aria-hidden="true" />
+            <div className="live-hotkey"><RememberHotkeySetting /></div>
+            <div className="row live-go">
+              <button type="button" className="btn heat lg" disabled={busy !== null} onClick={start}>
+                <Target aria-hidden="true" />
                 {busy === "start" ? "Starting…" : "Start marking"}
               </button>
-              <p className="rlive-fine">
-                <b>Nothing is recorded.</b> Recall writes the second you pressed the key, and your clock
-                offset, to this PC. No audio, no video, no upload.
-              </p>
+              <span className="t3">Nothing is recorded. Recall keeps the second you pressed the key, on this PC.</span>
             </div>
-            {message && <p className="rlive-message" role="status">{message}</p>}
-          </div>
-        )}
+            {message && <p className="live-msg" role="status">{message}</p>}
+          </section>
 
-        {!!session && (
-          <>
-            <div className="rlive-instrument">
-              <div className="rlive-clockrow">
-                <strong className={`rlive-clock ${ended ? "is-ended" : ""}`} aria-label={`Session duration ${elapsedLabel(session, now)}`}>
-                  {elapsedLabel(session, now)}
-                </strong>
-                <span className="rlive-clockmeta">
-                  <span className={`rlive-state ${active ? "is-active" : "is-ended"}`}>
-                    <i aria-hidden="true" />{active ? "Marking" : "Session ended"}
-                  </span>
-                  <small>
-                    Started {clockOfDay(session.started_at_utc)} · {markSource === "stream" ? "live stream" : "recording"}
-                  </small>
-                </span>
-                <span className="rlive-count">
-                  <b className="t-num">{String(markCount).padStart(2, "0")}</b>
-                  <small>{markCount === 1 ? "moment marked" : "moments marked"}</small>
-                </span>
-              </div>
-
-              <MarkTape
-                marks={marks} session={session} now={now} live={!!active} unmappedIds={unmappedIds}
-              />
-              <div className="rlive-tape-legend">
-                <em><i aria-hidden="true" />one tick per mark, placed by elapsed time</em>
-                {unmappedIds.size > 0 && (
-                  <em className="is-outside">
-                    <i aria-hidden="true" />{plural(unmappedIds.size, "mark")} outside the recording
-                  </em>
-                )}
-              </div>
-
-              {planReady && (
-                <dl className="rlive-projection">
-                  <div>
-                    <dt>Search windows</dt>
-                    <dd className="t-num">{plan!.regions.length}<small>from {plural(plan!.mapped_event_count, "mark")}</small></dd>
-                  </div>
-                  <div>
-                    <dt>Video to scan</dt>
-                    <dd className="t-num">
-                      {fmtClock(plan!.total_region_seconds)}
-                      <small>of {fmtClock(elapsedSeconds(session, now))}</small>
-                    </dd>
-                  </div>
-                  <div className="rlive-projection-say">
-                    <span>
-                      {active
-                        ? <>End the session, attach the recording, and Recall reads <b>{fmtClock(plan!.total_region_seconds)}</b> instead of the whole stream.</>
-                        : <>Recall reads <b>{fmtClock(plan!.total_region_seconds)}</b> of video instead of the whole recording. Marks close together share one window.</>}
-                    </span>
-                  </div>
-                </dl>
-              )}
-            </div>
-
-            {active && (
-              <div className="rlive-actionbar">
-                <button type="button" className="rlive-remember" disabled={busy !== null} onClick={remember}>
-                  <Target size={19} aria-hidden="true" />
-                  {busy === "remember" ? "Saving…" : "Remember this"}
-                  {hotkey && <kbd className="rlive-remember-key">{hotkey}</kbd>}
-                </button>
-                <p className="rlive-listening">
-                  <b>Recall is listening.</b> The shortcut fires with this window minimised, so you can go
-                  back to the game.
-                </p>
-                <button type="button" className="btn-secondary" disabled={busy !== null} onClick={stop}>
-                  <X size={13} aria-hidden="true" />
-                  {busy === "stop" ? "Ending…" : "End session"}
-                </button>
-              </div>
-            )}
-
-            {ended && (
-              <div className="rlive-attach">
-                <div className="rlive-attach-ask">
-                  <b>Where is the recording?</b>
-                  <small>{markSource === "stream" ? STREAM_HINT : RECORDING_HINT}</small>
-                </div>
-                {markSource === "stream" && (
-                  <input
-                    type="url" className="rlive-vod-input" value={vodUrl}
-                    placeholder="https://www.twitch.tv/videos/…"
-                    aria-label="Twitch VOD link for the stream you marked"
-                    onChange={(event) => setVodUrl(event.target.value)}
-                  />
-                )}
-                <div className="rlive-start">
-                  <button
-                    type="button" className="cta-accent"
-                    disabled={busy !== null || markCount < 1} onClick={scan}
-                  >
-                    {markSource === "stream" ? <Film size={15} aria-hidden="true" /> : <FolderOpen size={15} aria-hidden="true" />}
-                    {busy === "scan"
-                      ? "Opening…"
-                      : markSource === "stream" ? "Attach VOD & scan" : "Select recording & scan"}
-                  </button>
-                  <button
-                    type="button" className="btn-secondary" disabled={busy !== null}
-                    onClick={() => { setSession(null); setVodUrl(""); setPlan(null); setMessage(null); void loadEarlier(); }}
-                  >
-                    <Check size={13} aria-hidden="true" /> Start another
-                  </button>
-                  <p className="rlive-fine">
-                    A full scan of the whole recording stays available from <b>New project</b> if you
-                    would rather not rely on the marks.
-                  </p>
-                </div>
-                {message && <p className="rlive-message" role="status">{message}</p>}
-              </div>
-            )}
-            {active && message && <p className="rlive-message" role="status">{message}</p>}
-          </>
-        )}
-      </section>
-
-      <aside className="rlive-rail" aria-label={session ? "Marks in this session" : "Earlier sessions"}>
-        {session ? (
-          <>
-            <div className="rlive-rail-head">
-              <b>Marks</b><small>{active ? "newest first" : "in stream order"}</small>
-              <span className="t-num">{String(markCount).padStart(2, "0")}</span>
-            </div>
-            <div className="rlive-rail-list">
-              {(active ? [...marks].reverse() : marks).map((mark, index) => {
-                const ordinal = active ? markCount - index : index + 1;
-                const offset = (new Date(mark.occurred_at_utc).getTime() - startedAt(session)) / 1000;
-                const outside = unmappedIds.has(mark.id);
-                return (
-                  <div key={mark.id} className={`rlive-mark ${outside ? "is-outside" : ""}`}>
-                    <span className="rlive-mark-ix t-num">{String(ordinal).padStart(2, "0")}</span>
-                    <span className="rlive-mark-body">
-                      <b className="t-num">{fmtClock(Math.max(0, offset))}</b>
-                      <small>
-                        {clockOfDay(mark.occurred_at_utc)}
-                        {" · "}
-                        {mark.source === "recall_live_tab" ? "button" : "shortcut"}
-                      </small>
-                    </span>
-                    {outside && <span className="rlive-mark-flag">outside</span>}
-                    <button
-                      type="button" className="rlive-mark-remove"
-                      disabled={removing !== null}
-                      aria-label={`Remove the mark at ${fmtClock(Math.max(0, offset))}`}
-                      onClick={() => void removeMark(mark.id)}
-                    >
-                      <X size={13} aria-hidden="true" />
-                    </button>
-                  </div>
-                );
-              })}
-              {!markCount && (
-                <div className="rlive-rail-empty">
-                  <Target size={18} aria-hidden="true" />
-                  <b>No marks yet</b>
-                  <small>
-                    {active && hotkey
-                      ? `Press ${hotkey} the moment something happens. Every mark lands here.`
-                      : "Every moment you mark lands here as you make it."}
-                  </small>
-                </div>
-              )}
-            </div>
-            <div className="rlive-rail-foot">
-              {planReady
-                ? <>Each window is 90s before a mark and 30s after. Marks closer than that share one.</>
-                : <>Windows are worked out once your marks can be placed against the recording.</>}
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="rlive-rail-head">
-              <b>Earlier sessions</b>
-              <span className="t-num">{earlier.length}</span>
-            </div>
-            <div className="rlive-rail-list">
+          <section className="live-earlier-col" aria-label="Earlier sessions">
+            <div className="sec-t"><h2 className="disp">Earlier sessions</h2></div>
+            <div className="live-earlier">
               {earlier.map((entry) => {
                 const count = marksOf(entry).length;
+                const scanned = scansByRecallSession.get(entry.id);
                 return (
-                  <button
-                    type="button" key={entry.id} className="rlive-prev"
-                    onClick={() => void reopen(entry)}
-                  >
-                    <span className="rlive-prev-name">
+                  <button type="button" key={entry.id} className="brow glass live-prev" onClick={() => void reopen(entry)}>
+                    <span className="live-prev-ic" aria-hidden="true"><Broadcast /></span>
+                    <span className="live-prev-copy">
                       <b>{entry.title || "Recall session"}</b>
                       <small>
                         {shortDate(entry.started_at_utc)}
                         {entry.ended_at_utc ? ` · ${fmtClock(elapsedSeconds(entry, now))}` : ""}
+                        {" · "}<span className="num">{plural(count, "mark")}</span>
                       </small>
                     </span>
-                    <span className="rlive-prev-meta">
-                      <span className="t-num">{plural(count, "mark")}</span>
-                      <i className="rlive-prev-sep" aria-hidden="true" />
-                      {(() => {
-                        const scan = scansByRecallSession.get(entry.id);
-                        if (scan?.status === "completed") {
-                          return <span className="rlive-chip is-ok">{plural(scan.clips.length, "moment")} found</span>;
-                        }
-                        if (scan) return <span className="rlive-chip">Scan {scan.status}</span>;
-                        return <span className="rlive-chip is-warn">Not scanned yet</span>;
-                      })()}
-                    </span>
+                    {scanned?.status === "completed"
+                      ? <span className="badge keep">{plural(scanned.clips.length, "moment")} found</span>
+                      : scanned ? <span className="badge">Scan {scanned.status}</span>
+                        : <span className="badge heat">Not scanned yet</span>}
                   </button>
                 );
               })}
               {!earlier.length && (
-                <div className="rlive-rail-empty">
-                  <Clock size={18} aria-hidden="true" />
-                  <b>No sessions yet</b>
-                  <small>Sessions you finish stay here, so an unscanned one is never lost.</small>
-                </div>
+                <p className="live-none t3">Sessions you finish stay here until they're scanned, so marks are never lost.</p>
               )}
             </div>
-            <div className="rlive-rail-foot">
-              Marks stay on this PC. An unscanned session can be attached to its recording at any time.
+          </section>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="narrow live-session">
+      {active ? (
+        <section className="live-hero glass" aria-label="Recall Live session">
+          <span className="badge live-badge"><span className="dot" /><span>Marking</span> · {markSource === "stream" ? "live stream" : "recording"}</span>
+          <strong className="live-clock num" aria-label={`Session duration ${elapsedLabel(session, now)}`}>{elapsedLabel(session, now)}</strong>
+          <button type="button" className="remember" disabled={busy !== null} onClick={remember}>
+            <span>{busy === "remember" ? "Saving…" : "Remember this"}{hotkey && <kbd>{hotkey}</kbd>}</span>
+          </button>
+          <p className="t3 live-hero-note">Recall is listening. The shortcut works with this window minimised, so go back to the game.</p>
+          {message && <p className="live-msg" role="status">{message}</p>}
+        </section>
+      ) : (
+        <section className="panel glass live-ended" aria-label="Attach the recording">
+          <span className="eyebrow">{plural(markCount, "mark")} · started {clockOfDay(session.started_at_utc)}</span>
+          <h2 className="disp">Where is the recording?</h2>
+          <p className="t2">{markSource === "stream" ? STREAM_HINT : RECORDING_HINT}</p>
+          {markSource === "stream" ? (
+            <div className="row live-attach">
+              <input
+                type="url" className="field" value={vodUrl}
+                placeholder="https://www.twitch.tv/videos/…"
+                aria-label="Twitch VOD link for the stream you marked"
+                onChange={(event) => setVodUrl(event.target.value)}
+              />
+              <button type="button" className="btn heat lg" disabled={busy !== null || markCount < 1} onClick={scan}>
+                <Film aria-hidden="true" />{busy === "scan" ? "Opening…" : "Attach VOD & scan"}
+              </button>
             </div>
-          </>
-        )}
-      </aside>
+          ) : (
+            <div className="row">
+              <button type="button" className="btn heat lg" disabled={busy !== null || markCount < 1} onClick={scan}>
+                <FolderOpen aria-hidden="true" />{busy === "scan" ? "Opening…" : "Select recording & scan"}
+              </button>
+            </div>
+          )}
+          {planReady && (
+            <div className="tele">
+              <div><span>Search windows</span><b className="num">{plan!.regions.length}</b></div>
+              <div><span>Footage to read</span><b className="num">{fmtClock(plan!.total_region_seconds)}</b></div>
+              <div><span>Instead of</span><b className="num">{fmtClock(elapsedSeconds(session, now))}</b></div>
+            </div>
+          )}
+          {message && <p className="live-msg" role="status">{message}</p>}
+          <div className="row wrap live-ended-foot">
+            <button type="button" className="btn sm ghost" disabled={busy !== null} onClick={resetSession}><Check aria-hidden="true" />Start another</button>
+            <span className="t3">A full scan of the whole recording is always there from New stream.</span>
+          </div>
+        </section>
+      )}
+
+      <section className="panel glass live-marks" aria-label="Marks in this session">
+        <div className="panel-t">
+          <h3 className="disp">Marks</h3>
+          <span className="badge num">{markCount}</span>
+          <span className="t3 live-order">{active ? "newest first" : "in stream order"}</span>
+          <span className="sp" />
+          {active
+            ? (
+              <button type="button" className="btn sm ghost danger" disabled={busy !== null} onClick={stop}>
+                <X aria-hidden="true" />{busy === "stop" ? "Ending…" : "End session"}
+              </button>
+            )
+            : <span className="badge">Session ended</span>}
+        </div>
+        <MarkTape marks={marks} session={session} now={now} live={!!active} unmappedIds={unmappedIds} />
+        {markList}
+        <p className="t3 live-foot">
+          {planReady
+            ? "Each window is 90s before a mark and 30s after. Marks closer than that share one."
+            : "Windows are worked out once your marks can be placed against the recording."}
+        </p>
+      </section>
     </div>
   );
 }

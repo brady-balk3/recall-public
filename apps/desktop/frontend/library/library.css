@@ -1,0 +1,110 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Library: poster grid by default, a denser list with a trailing hover preview. */
+
+.lib-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 22px; }
+.lib-g { margin-bottom: 26px; }
+.lib-gh { display: flex; align-items: baseline; gap: 10px; margin: 0 4px 14px; }
+.lib-gh b { font-size: 14px; }
+.lib-gh .t3 { font-size: 12.5px; }
+.lib-grid { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.lib-none { display: flex; align-items: center; gap: 10px; padding: 40px 4px; }
+.lib-none svg { width: 18px; height: 18px; }
+.lib-empty { display: grid; gap: 14px; justify-items: start; padding: 48px 52px; border-radius: 28px; }
+.lib-empty h2 { font-size: 40px; }
+
+.lib-select {
+  position: sticky;
+  top: 8px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: -8px 0 20px;
+  padding: 10px 12px 10px 14px;
+  border-radius: 18px;
+  font-size: 13.5px;
+}
+.btn.danger { color: var(--danger); }
+
+/* list */
+.lrows { padding: 6px; border-radius: 22px; }
+.lrow { position: relative; display: flex; align-items: center; border-radius: 16px; transition: background-color var(--dur-1) ease; }
+.lrow + .lrow { box-shadow: 0 -1px 0 var(--stroke); }
+.lrow:hover, .lrow:hover + .lrow { box-shadow: none; }
+.lrow:hover { background: var(--fill); }
+.lrow.selected { background: var(--heat-soft); }
+.lrow-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr) 220px 80px 150px;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 56px 12px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--t1);
+  font: 400 13.5px var(--f-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.lrow-main:has(.chk) { grid-template-columns: 18px 160px minmax(0, 1fr) 220px 80px 150px; }
+.lrow .th { position: relative; width: 160px; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: #141414; }
+.lrow .th > img, .lrow .th > video, .lrow .th > span, .lrow .th > div { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.lrow .nm { min-width: 0; }
+.lrow .nm b { display: block; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lrow .nm small { display: block; margin-top: 2px; font-size: 13.5px; color: var(--t3); }
+.lrow .spark { display: block; min-width: 0; }
+.spark-svg { display: block; width: 100%; height: 26px; }
+:root[data-theme="light"] .spark-svg path { stroke: var(--t2); }
+:root[data-theme="light"] .spark-svg path:first-of-type { fill: var(--fill-2); }
+.lrow .kp { color: var(--t2); }
+.lrow .st { display: flex; justify-content: flex-end; }
+.lrow .chk {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1.5px var(--stroke-2);
+  color: var(--heat-ink);
+}
+.lrow .chk.on { background: var(--heat); box-shadow: none; }
+.lrow .chk svg { width: 12px; height: 12px; }
+.lrow-del { position: absolute; right: 12px; opacity: 0; transition: opacity var(--dur-1) ease; }
+.lrow:hover .lrow-del, .lrow-del:focus-visible { opacity: 1; }
+.lrow-del:hover { color: var(--danger); }
+
+/* trailing hover preview (rendered in <body>) */
+.hovimg {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 60;
+  width: 300px;
+  border-radius: 14px;
+  overflow: hidden;
+  pointer-events: none;
+  background: #0C0C0D;
+  color: #fff;
+  font: 400 12px var(--f-ui);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .14), 0 24px 50px rgba(0, 0, 0, .6);
+  opacity: 0;
+  scale: .94;
+  transition: opacity 140ms ease, scale 180ms var(--ease-out);
+}
+.hovimg.on { opacity: 1; scale: 1; }
+.hv-img { aspect-ratio: 16 / 9; background-size: cover; background-position: center; }
+.hv-b { height: 34px; padding: 0 12px; display: flex; align-items: center; gap: 6px; }
+.hv-b .sp { flex: 1; }
+.hv-b .t3 { color: rgba(255, 255, 255, .55); }
+.hv-b b { font-weight: 700; }
+
+@media (max-width: 1400px) {
+  .lrow-main { grid-template-columns: 128px minmax(0, 1fr) 140px 70px 130px; }
+  .lrow-main:has(.chk) { grid-template-columns: 18px 128px minmax(0, 1fr) 140px 70px 130px; }
+  .lrow .th { width: 128px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hovimg { transition: opacity 140ms ease; scale: 1; }
+}

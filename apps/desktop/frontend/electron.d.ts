@@ -14,6 +14,7 @@ declare global {
     electronAPI?: {
       getApiConfig: () => { endpoint: string; token: string; rememberHotkey: string | null };
       openFileDialog: () => Promise<string | null>;
+      getPathForFile?: (file: File) => string | null;
       openFolderDialog: () => Promise<string | null>;
       writeClipboardText: (text: string) => Promise<{ success: boolean; error?: string }>;
       openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;

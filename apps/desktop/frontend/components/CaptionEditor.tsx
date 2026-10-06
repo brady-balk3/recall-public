@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Brady Balk
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Check } from "../lib/icons";
 import type { CaptionFont, CaptionPosition, CaptionSize, CaptionStyle } from "../lib/store";
 import { StudioSwitch } from "./StudioControls";
+import { CAPTION_COLORS } from "../theme/accent";
 
 const CAPTION_FONTS: CaptionFont[] = ["Arial Black", "Impact", "Arial", "Verdana", "Georgia", "Trebuchet MS", "Segoe UI Black"];
 const CAPTION_SIZES: { value: CaptionSize; label: string }[] = [
@@ -18,8 +19,8 @@ const CAPTION_POSITIONS: { value: CaptionPosition; label: string }[] = [
 ];
 const PREVIEW_SIZE_PX: Record<CaptionSize, number> = { small: 12, medium: 15, large: 19 };
 const PREVIEW_JUSTIFY: Record<CaptionPosition, "flex-start" | "center" | "flex-end"> = { top: "flex-start", middle: "center", bottom: "flex-end" };
-const CAPTION_TEXT_SWATCHES = ["#FFFFFF", "#F6F0E9", "#E9BE6B", "#7ED99A"];
-const CAPTION_HIGHLIGHT_SWATCHES = ["#F08A5C", "#E9BE6B", "#FF7EB6", "#8AA8FF", "#7ED99A"];
+const CAPTION_TEXT_SWATCHES = ["#FFFFFF", "#F2F2F2", "#FFFF00", "#35E37D"];
+const CAPTION_HIGHLIGHT_SWATCHES = CAPTION_COLORS.flatMap((color) => (color.hex ? [color.hex] : []));
 const PREVIEW_WORDS = ["that", "was", "actually", "insane"];
 
 /** Burned-in caption style editor with a live 9:16 preview. */
@@ -27,10 +28,13 @@ export function CaptionEditor({
   caption,
   onChange,
   animateHighlight = false,
+  highlightControl,
 }: {
   caption: CaptionStyle;
   onChange: (patch: Partial<CaptionStyle>) => void;
   animateHighlight?: boolean;
+  /** Replaces the built-in highlight swatches (Settings uses the named caption colors). */
+  highlightControl?: ReactNode;
 }) {
   const [hot, setHot] = useState(2);
   useEffect(() => {
@@ -43,23 +47,23 @@ export function CaptionEditor({
   return (
     <div className="mock-v1-caption">
       <div className="mock-v1-caption-editor">
-        <div className="toggle-row">
-          <div className="toggle-label-group"><span className="preset-name">Burn in captions</span><span className="form-description">Word-by-word subtitles rendered onto every exported clip. Turn off for clean video.</span></div>
+        <div className="setrow">
+          <div className="st"><b>Burn in captions</b><small>Word-by-word subtitles on every exported clip. Turn off for clean video.</small></div>
           <StudioSwitch checked={caption.enabled} onChange={(enabled) => onChange({ enabled })} label="Burn in captions" />
         </div>
         <div className="mock-v1-caption-knobs" style={{ opacity: caption.enabled ? 1 : 0.45, pointerEvents: caption.enabled ? "auto" : "none" }}>
           <label className="form-group"><span className="form-label">Font</span>
-            <select className="input-text" value={caption.font} onChange={(event) => onChange({ font: event.target.value as CaptionFont })}>{CAPTION_FONTS.map((font) => <option key={font} value={font}>{font}</option>)}</select>
+            <select className="field" value={caption.font} onChange={(event) => onChange({ font: event.target.value as CaptionFont })}>{CAPTION_FONTS.map((font) => <option key={font} value={font}>{font}</option>)}</select>
           </label>
           <div className="form-group"><span className="form-label">Size</span>
-            <div className="mock-v1-chips" role="group" aria-label="Caption size">{CAPTION_SIZES.map((option) => <button type="button" key={option.value} className={`mock-v1-chip ${caption.size === option.value ? "active" : ""}`} aria-pressed={caption.size === option.value} onClick={() => onChange({ size: option.value })}>{option.label}</button>)}</div>
+            <div className="seg" role="group" aria-label="Caption size">{CAPTION_SIZES.map((option) => <button type="button" key={option.value} className={caption.size === option.value ? "on" : ""} aria-pressed={caption.size === option.value} onClick={() => onChange({ size: option.value })}>{option.label}</button>)}</div>
           </div>
           <div className="mock-v1-caption-colors">
             <CaptionColorField label="Text color" value={caption.textColor} swatches={CAPTION_TEXT_SWATCHES} onChange={(textColor) => onChange({ textColor })} />
-            <CaptionColorField label="Highlight color" value={caption.highlightColor} swatches={CAPTION_HIGHLIGHT_SWATCHES} onChange={(highlightColor) => onChange({ highlightColor })} />
+            {highlightControl ?? <CaptionColorField label="Highlight color" value={caption.highlightColor} swatches={CAPTION_HIGHLIGHT_SWATCHES} onChange={(highlightColor) => onChange({ highlightColor })} />}
           </div>
           <div className="form-group"><span className="form-label">Position</span>
-            <div className="mock-v1-chips" role="group" aria-label="Caption position">{CAPTION_POSITIONS.map((option) => <button type="button" key={option.value} className={`mock-v1-chip ${caption.position === option.value ? "active" : ""}`} aria-pressed={caption.position === option.value} onClick={() => onChange({ position: option.value })}>{option.label}</button>)}</div>
+            <div className="seg" role="group" aria-label="Caption position">{CAPTION_POSITIONS.map((option) => <button type="button" key={option.value} className={caption.position === option.value ? "on" : ""} aria-pressed={caption.position === option.value} onClick={() => onChange({ position: option.value })}>{option.label}</button>)}</div>
           </div>
         </div>
       </div>

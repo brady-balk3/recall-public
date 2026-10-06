@@ -152,7 +152,7 @@ export function describeScanFailure(errorMessage?: string): ScanFailureInfo {
   const info = (title: string, hint: string): ScanFailureInfo => ({ stage, title, hint, raw });
 
   if (!text) {
-    return info("The scan stopped unexpectedly.", "Try the scan again — if it keeps happening, copy the report below.");
+    return info("The scan stopped unexpectedly.", "Try the scan again. If it keeps happening, copy the report below.");
   }
   if (/(yt-dlp|403|404|http error|unable to download|urlopen|getaddrinfo|network|connection)/.test(text)) {
     return info("The link couldn't be downloaded.", "Check that the VOD is public and still online, then retry. Sub-only VODs need a downloaded file instead.");
@@ -172,7 +172,7 @@ export function describeScanFailure(errorMessage?: string): ScanFailureInfo {
   if (/(permission|access is denied|errno 13)/.test(text)) {
     return info("Recall wasn't allowed to open the file.", "Another program may have it locked, or it's in a protected folder. Move it and retry.");
   }
-  return info("Something inside the scan engine failed.", "Retry the scan — if it fails the same way, copy the report below.");
+  return info("Something inside the scan engine failed.", "Retry the scan. If it fails the same way, copy the report below.");
 }
 
 /** Ready-to-paste post text per platform (plan 22 §3.3) — deterministic

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Brady Balk
 import { useCallback, useEffect, useState } from "react";
-import { Bug, FileText, FolderOpen } from "lucide-react";
+import { Bug, FileText, FolderOpen } from "../lib/icons";
 
 /** Reaching a crash report used to require knowing a keyboard shortcut that was
  *  never bound. The app has a custom title bar, so a menu is not the place for
@@ -27,7 +27,7 @@ export default function DiagnosticsPanel() {
     if (!info) return;
     const result = await window.electronAPI?.openPath?.(info.logDir);
     setNote(result && result.success === false
-      ? "No log folder yet — it appears the first time Recall records something."
+      ? "No log folder yet. It appears the first time Recall records something."
       : undefined);
   }, [info]);
 
@@ -46,10 +46,10 @@ export default function DiagnosticsPanel() {
         source details, or access tokens. Review those before sharing.
       </p>
       <div className="diagnostics-actions">
-        <button type="button" className="btn-secondary" onClick={() => void openLogFolder()}>
+        <button type="button" className="btn sm" onClick={() => void openLogFolder()}>
           <FolderOpen size={14} aria-hidden="true" /> Open log folder
         </button>
-        <button type="button" className="btn-secondary" onClick={() => void openDevTools()}>
+        <button type="button" className="btn sm ghost" onClick={() => void openDevTools()}>
           <Bug size={14} aria-hidden="true" /> Open developer tools
         </button>
       </div>

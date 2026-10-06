@@ -401,8 +401,10 @@ def _render_clip_to_directory(
         print(f"FFmpeg render failed for {clip.clip_id}:\n{error_msg}")
         raise RuntimeError(f"FFmpeg export failed: {error_msg}")
 
-    # Write metadata log alongside the MP4
+    # Write metadata log alongside the MP4. `captions_burned` records whether
+    # this render actually carries burned-in captions (the ass filter ran), so
+    # the in-app editor never has to guess from today's caption setting.
     with open(log_path, "w", encoding="utf-8") as f:
-        json.dump(clip.to_dict(), f, indent=2)
+        json.dump({**clip.to_dict(), "captions_burned": bool(ass_path)}, f, indent=2)
 
     return os.path.abspath(output_path)

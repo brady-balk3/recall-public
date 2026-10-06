@@ -19,10 +19,16 @@ from engines.caption.whisper_asr import extract_clip_audio
 
 
 def transcribe_vod(wav_path: str, language: str = "en", model_size: str | None = None,
-                   cancel_check=None, progress_callback=None, settings: dict | None = None) -> dict:
-    """Full-VOD transcription with word timestamps. Returns the Whisper result dict."""
+                   cancel_check=None, progress_callback=None, settings: dict | None = None,
+                   words_callback=None) -> dict:
+    """Full-VOD transcription with word timestamps. Returns the Whisper result dict.
+
+    ``words_callback`` receives each chunk's timed words as they land (see
+    QwenASRAdapter.transcribe); it is only passed through when given.
+    """
     _ = settings
     model = get_whisper_model(model_size)
+    extra = {"words_callback": words_callback} if words_callback else {}
     return transcribe_with_cancel(
         model,
         wav_path,
@@ -31,6 +37,7 @@ def transcribe_vod(wav_path: str, language: str = "en", model_size: str | None =
         language=language,
         condition_on_previous_text=False,  # avoid drift over a long VOD
         progress_callback=progress_callback,
+        **extra,
     )
 
 

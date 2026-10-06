@@ -27,8 +27,8 @@ import os
 import hmac
 import math
 import json as _json
-import shutil
 import threading
+import uuid
 from pathlib import Path
 
 # Ensure the root project path is available for imports
@@ -322,6 +322,8 @@ class EditClipRequest(BaseModel):
     video_fade_out: Optional[float] = None
     audio_fade_in: Optional[float] = None
     audio_fade_out: Optional[float] = None
+    # The Cutting Room's corrected caption, re-timed onto the new window.
+    caption_text: Optional[str] = Field(default=None, max_length=5000)
 
     @model_validator(mode="after")
     def validate_times(self):
@@ -362,7 +364,13 @@ class ManualClipRequest(BaseModel):
     tags: List[str] = Field(default_factory=list, max_length=20)
     layout: str = "auto"
     focus_x: float = 0.5
+    # A facecam box the creator drew in the Cutting Room, normalized
+    # [x, y, w, h] on the source frame. Replaces the scan's detection.
+    facecam_override: Optional[List[float]] = None
     captions_enabled: Optional[bool] = None
+    # The caption as the creator corrected it in the Cutting Room; re-timed
+    # onto this window's words and burned into the first render.
+    caption_text: Optional[str] = Field(default=None, max_length=5000)
     video_fade_in: float = 0.0
     video_fade_out: float = 0.0
     audio_fade_in: float = 0.0
@@ -382,6 +390,14 @@ class ManualClipRequest(BaseModel):
             raise ValueError("layout must be auto, vertical_split, gameplay_pip, or full_gameplay.")
         if not math.isfinite(self.focus_x) or not 0.0 <= self.focus_x <= 1.0:
             raise ValueError("focus_x must be between 0 and 1.")
+        if self.facecam_override is not None:
+            box = self.facecam_override
+            if len(box) != 4 or any(not math.isfinite(v) for v in box):
+                raise ValueError("facecam_override must be four finite numbers [x, y, w, h].")
+            x, y, w, h = box
+            eps = 1e-6
+            if x < -eps or y < -eps or w <= 0 or h <= 0 or x + w > 1 + eps or y + h > 1 + eps:
+                raise ValueError("facecam_override must lie inside the frame (normalized 0-1).")
         fade_values = (
             self.video_fade_in, self.video_fade_out,
             self.audio_fade_in, self.audio_fade_out,
@@ -1263,6 +1279,27 @@ def run_pipeline_job(request: RunJobRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class OpenLocalVideoRequest(BaseModel):
+    source_path: str
+    session_name: Optional[str] = None
+
+
+class ScanExistingRequest(BaseModel):
+    settings: Optional[Dict[str, Any]] = None
+
+
+@app.post("/jobs/open")
+def open_local_video(request: OpenLocalVideoRequest):
+    """Open a local video in the Cutting Room without scanning it."""
+    return job_service.open_local(request.source_path, request.session_name)
+
+
+@app.post("/jobs/{job_id}/scan")
+def scan_existing_job(job_id: str, request: ScanExistingRequest):
+    """Scan a video that was opened without one, keeping its session and clips."""
+    return job_service.scan_existing(job_id, request.settings)
+
+
 @app.post("/jobs/download")
 def download_vod_job(request: DownloadVodRequest):
     return job_service.download(request)
@@ -1391,6 +1428,12 @@ def clear_system_assets():
     """Delete all downloaded VODs; sessions and rendered clips stay."""
     return system_service.clear_assets()
 
+@app.get("/scan-estimate")
+def scan_estimate(mode: str = "quality", facecam_tracking: bool = True):
+    """This PC's measured scan speed, so New stream and Scans can say how long
+    a scan will take before it starts."""
+    return job_manager.scan_rates(mode, facecam_tracking)
+
 @app.post("/probe")
 def probe_source(request: ProbeRequest):
     """Pre-scan probe for the import preview: real duration + poster frame for a
@@ -1425,6 +1468,21 @@ def get_job_source(job_id: str):
     return job_service.source_media(job_id)
 
 
+@app.get("/jobs/{job_id}/waveform")
+def get_job_waveform(job_id: str):
+    """Waveform peaks for the whole source VOD, for the editor's timeline.
+
+    The editor streams long VODs by byte range and never decodes their audio
+    whole, so the engine does it once here (core/waveform_peaks.py). The first
+    request for a VOD takes ~25 s per four hours; later ones are cached.
+    """
+    return FileResponse(
+        job_service.waveform_path(job_id),
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 @app.get("/jobs/{job_id}/media-status")
 def job_media_status(job_id: str):
     """Which of this session's clip proxies survived on disk, and whether the
@@ -1455,6 +1513,13 @@ def job_thumb(job_id: str):
     path = job_service.poster_path(job_id)
     return FileResponse(path, media_type="image/jpeg")
 
+
+@app.get("/jobs/{job_id}/frame")
+def job_frame(job_id: str, t: float = 0.0, width: int = 1280):
+    """One full source frame (JPEG), for drawing the facecam in the Cutting Room."""
+    from fastapi import Response
+
+    return Response(job_service.frame_jpeg(job_id, t, width), media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
 
 @app.get("/jobs/{job_id}/filmstrip")
 def job_filmstrip(
@@ -1638,6 +1703,49 @@ def prepare_clip_preview(clip_id: str):
     """Render an explicitly requested vertical proof for a Second-look clip."""
     return clip_service.prepare_preview(clip_id)
 
+@app.get("/clips/{clip_id}/edited-video")
+def get_edited_video(clip_id: str):
+    """The in-app editor's cut of this clip, if the creator saved one."""
+    return clip_service.edited_video(clip_id)
+
+@app.put("/clips/{clip_id}/edited-video")
+async def put_edited_video(clip_id: str, request: Request):
+    """Store the MP4 the in-app editor exported (raw request body).
+
+    Streamed to a temp file in the exports folder, capped, then handed to the
+    service which checks it and moves it into place atomically."""
+    clip_service.edited_video_name(clip_id)  # rejects a bad id before any bytes land
+    os.makedirs(exports_dir, exist_ok=True)
+    tmp_path = os.path.join(exports_dir, f".upload_{uuid.uuid4().hex}.part")
+    received = 0
+    try:
+        with open(tmp_path, "wb") as handle:
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > clip_service.EDITED_VIDEO_MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="That edit is too large to keep")
+                handle.write(chunk)
+    except BaseException:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+    return clip_service.save_edited_video(clip_id, tmp_path)
+
+@app.get("/clips/{clip_id}/render-info")
+def get_render_info(clip_id: str):
+    """Facts about the clip's current render, e.g. whether captions are burned in."""
+    return clip_service.render_info(clip_id)
+
+@app.post("/clips/{clip_id}/clean-video")
+def render_clean_video(clip_id: str):
+    """Render the clip without burned-in captions (served at /media/clean_<id>.mp4)
+    so the in-app editor can carry the captions as editable text instead."""
+    return clip_service.render_clean_video(clip_id)
+
+@app.delete("/clips/{clip_id}/edited-video")
+def delete_edited_video(clip_id: str):
+    return clip_service.delete_edited_video(clip_id)
+
 @app.get("/clips/{clip_id}/thumb")
 def clip_thumb(clip_id: str):
     """Poster JPEG for grid cards / filmstrips. Serves the pre-rendered file,
@@ -1700,12 +1808,36 @@ def create_manual_clip(job_id: str, request: ManualClipRequest):
 
 @app.post("/jobs/{job_id}/clips/manual/framing")
 def resolve_manual_clip_framing(job_id: str, request: ManualClipRequest):
+    from engines.export.composition import plan_layers, resolve_plan
+
     start, end = clip_service.manual_bounds(job_id, request)
-    return clip_service.resolve_manual_framing(
+    resolved = clip_service.resolve_manual_framing(
         job_id, start, end,
         requested_layout=request.layout,
         focus_x=request.focus_x,
+        facecam_override=request.facecam_override,
     )
+    # The same plan the renderer builds from this layout, as rectangles the
+    # Cutting Room turns into its live 9:16 preview.
+    plan = resolve_plan(
+        resolved.get("facecam"), resolved.get("gameplay"), resolved.get("type") or "full_gameplay",
+        float(resolved.get("focus_x", 0.5)), resolved.get("facecam_subject_top"),
+        bool(resolved.get("camera_cover")),
+    )
+    resolved["layers"] = plan_layers(plan)
+    return resolved
+
+class CaptionWindowRequest(BaseModel):
+    start: float
+    end: float
+    # Run the short-window decode when the scan has no words there (loads ASR).
+    decode: bool = False
+
+
+@app.post("/jobs/{job_id}/captions/window")
+def caption_window(job_id: str, request: CaptionWindowRequest):
+    """The words a clip of this window would burn in (the Cutting Room's caption track)."""
+    return clip_service.window_caption_words(job_id, request.start, request.end, decode=request.decode)
 
 @app.post("/jobs/{job_id}/clips/manual/preview")
 def preview_manual_clip(job_id: str, request: ManualClipRequest):

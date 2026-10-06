@@ -1,0 +1,156 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Recall Live: pick what you're marking and start; while marking, the clock
+   and one big Remember button; after, attach the recording. The mark tape is
+   the creator's own presses over the session span, never a made-up curve. */
+
+.live2 .ph h1 { font-size: 48px; }
+.live-alpha { height: 22px; padding: 0 9px; font-size: 10.5px; letter-spacing: .06em; }
+.live-idle { display: grid; gap: 22px; }
+.live-explain { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 36px; align-items: center; padding: 30px 32px; border-radius: var(--r-xl); }
+.le-copy { display: grid; gap: 12px; align-content: start; }
+.le-copy h2 { margin: 0; font-size: clamp(28px, 2.4vw, 38px); line-height: 1.08; letter-spacing: -.025em; text-wrap: balance; }
+.le-copy p { margin: 0; max-width: 46ch; font-size: 15px; line-height: 1.5; }
+.le-key { display: grid; gap: 10px; margin-top: 8px; }
+.le-key small { font-size: 12.5px; }
+.le-viz { display: grid; gap: 10px; }
+.le-viz .hm-viz { height: 170px; border-radius: 16px; }
+.le-span { position: absolute; bottom: 10px; z-index: 3; display: grid; place-items: center; height: 18px; border-radius: 5px; font: 600 10.5px var(--f-mono); color: var(--heat-ink); background: var(--h2); }
+.le-span.after { background: var(--h1); }
+.le-axis { display: flex; justify-content: space-between; font: 400 11px var(--f-mono); color: var(--t4); }
+.live-grid { display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 34%, 440px); gap: 22px; align-items: start; }
+.live-grid > * { min-width: 0; }
+.live-setup { display: grid; gap: 8px; padding: 22px 24px; }
+.live-setup .live-go { margin-top: 12px; flex-wrap: wrap; }
+.live-earlier-col { display: grid; gap: 10px; align-content: start; }
+.live-earlier-col .sec-t { margin: 4px 0 0; }
+.live-setup .opt b svg { width: 16px; height: 16px; }
+.live-hotkey { margin-top: 10px; }
+.live-go { gap: 16px; }
+.live-go .t3 { font-size: 13px; }
+.live-msg { margin: 0; padding: 12px 14px; border-radius: 14px; background: var(--fill); font-size: 13.5px; color: var(--t2); }
+.live-earlier { display: grid; gap: 8px; }
+.live-prev {
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  width: 100%;
+  border: 0;
+  color: var(--t1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-1) ease, transform var(--dur-1) var(--ease-out);
+}
+.live-prev:hover { background: var(--fill-2); }
+.live-prev:active { transform: scale(.995); }
+.live-prev-ic { display: grid; place-items: center; color: var(--t2); }
+.live-prev-ic svg { width: 20px; height: 20px; }
+.live-prev-copy { display: grid; gap: 2px; min-width: 0; }
+.live-prev-copy b { font-size: 14.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live-prev-copy small { font-size: 12.5px; color: var(--t3); }
+.live-none { margin: 0; padding: 4px 2px; font-size: 13px; }
+
+.caps { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.caps-k { display: inline-flex; align-items: center; gap: 8px; }
+.caps .plus { color: var(--t4); font-weight: 600; }
+.live2 .kcap {
+  height: 56px;
+  min-width: 56px;
+  padding: 0 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: var(--lg-button);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), inset 0 -3px 0 rgba(0, 0, 0, .45), 0 0 0 1px var(--stroke), 0 8px 20px rgba(0, 0, 0, .4);
+  color: var(--t1);
+  font: 700 20px var(--f-ui);
+}
+.live2 .caps .caps-k:last-child .kcap { background: var(--lg-heat-sheen), var(--heat); color: var(--heat-ink); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), inset 0 -3px 0 rgba(0, 0, 0, .2), 0 10px 24px -8px var(--heat-glow); }
+.hm-viz { position: relative; height: 90px; border-radius: 12px; overflow: hidden; background: var(--fill); }
+.hm-viz::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; background: var(--fill-2); }
+.hm-viz .win { position: absolute; top: 0; bottom: 0; border-radius: 6px; background: var(--heat-soft); box-shadow: inset 0 0 0 1px var(--heat-line); }
+.hm-viz .pin { position: absolute; top: 0; bottom: 0; z-index: 2; width: 2px; margin-left: -1px; background: var(--t1); }
+.hm-viz .pin i { position: absolute; top: 8px; left: 50%; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; background: var(--t1); box-shadow: 0 0 0 3px var(--bg); }
+.hm-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 12px; color: var(--t3); }
+.hm-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.lg-pin { width: 8px; height: 8px; border-radius: 50%; background: var(--t1); }
+.lg-win { width: 14px; height: 8px; border-radius: 3px; background: var(--heat-soft); box-shadow: inset 0 0 0 1px var(--heat-line); }
+
+/* marking, and after */
+.narrow { max-width: 940px; margin: 0 auto; }
+.live-session { display: grid; gap: 16px; }
+.live-hero { display: grid; place-items: center; gap: 18px; padding: 40px 30px; border-radius: var(--r-xl); text-align: center; }
+.live-badge { color: var(--danger); }
+.live-badge .dot { animation: live-pulse 1.6s ease-in-out infinite; }
+@keyframes live-pulse { 50% { opacity: .35; } }
+.live-clock { font: 800 clamp(64px, 7vw, 96px)/.9 var(--f-disp); letter-spacing: -.03em; }
+.remember {
+  position: relative;
+  width: 196px;
+  height: 196px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--lg-heat-sheen), var(--heat);
+  color: var(--heat-ink);
+  cursor: pointer;
+  box-shadow: 0 0 0 14px var(--heat-soft), 0 30px 80px -20px var(--heat-glow);
+  transition: transform .15s var(--spring), box-shadow .3s ease;
+}
+.remember:hover { box-shadow: 0 0 0 20px var(--heat-soft), 0 34px 90px -16px var(--heat-glow); }
+.remember:active { transform: scale(.94); }
+.remember:disabled { opacity: .6; }
+.remember span { display: grid; justify-items: center; gap: 10px; max-width: 150px; font: 800 30px/.95 var(--f-disp); letter-spacing: -.02em; }
+.remember kbd { padding: 3px 8px; border-radius: 8px; background: rgba(0, 0, 0, .14); color: inherit; font: 600 11px var(--f-ui); letter-spacing: 0; }
+.live-hero-note { max-width: 46ch; margin: 0; font-size: 13px; }
+
+.live-ended { display: grid; gap: 14px; padding: 28px; border-radius: 26px; }
+.live-ended h2 { font-size: clamp(34px, 3vw, 44px); line-height: 1.05; }
+.live-ended p { margin: 0; max-width: 62ch; }
+.live-attach .field { flex: 1; height: 50px; }
+.live-attach .btn { height: 50px; }
+.live-ended-foot { gap: 12px; margin-top: 4px; }
+.live-ended-foot .t3 { font-size: 12.5px; }
+
+.live-marks { display: grid; gap: 14px; padding: 22px 24px; border-radius: 24px; }
+.live-marks .panel-t { margin: 0; }
+.live-marks h3 { font-size: 24px; }
+.live-order { font-size: 12.5px; }
+.live-foot { margin: 0; font-size: 12.5px; }
+.btn.ghost.danger:hover { background: color-mix(in oklab, var(--danger) 14%, transparent); color: var(--danger); }
+
+.marks { display: grid; gap: 6px; max-height: 420px; overflow-y: auto; scrollbar-width: thin; }
+.mark { display: grid; grid-template-columns: 44px 90px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 8px 8px 12px; border-radius: 14px; background: var(--fill); font-size: 13px; }
+.mark-n { font: 700 14px var(--f-disp); color: var(--t3); }
+.mark .tcode { font: 700 19px var(--f-disp); font-variant-numeric: tabular-nums; }
+.mark.is-outside { opacity: .6; }
+.mark-out { font-style: normal; color: var(--maybe); }
+.marks-empty { display: grid; gap: 4px; padding: 18px 4px; }
+
+/* the tape, re-skinned */
+.live2 .mark-tape { height: 120px; margin: 0; border: 0; border-radius: 14px; background: var(--fill); }
+.live2 .mark-tape-grid i { bottom: 24px; background: var(--stroke); }
+.live2 .mark-tape-base { bottom: 24px; background: var(--fill-3); }
+.live2 .mark-tape-now { bottom: 24px; background: linear-gradient(90deg, transparent, var(--heat-soft)); }
+.live2 .mark-tape-tick { bottom: 24px; height: 72px; background: linear-gradient(180deg, var(--t1), transparent); }
+.live2 .mark-tape-tick i { background: var(--t1); }
+.live2 .mark-tape-tick.is-latest i { box-shadow: 0 0 0 4px var(--heat-soft); }
+.live2 .mark-tape-ruler { height: 24px; border-top: 0; }
+.live2 .mark-tape-ruler span { font: 500 11px var(--f-ui); font-variant-numeric: tabular-nums; color: var(--t4); }
+
+/* the Remember shortcut control (Recall Live and Settings) */
+.hotkey-setting { gap: 6px; padding: 12px 14px; border: 0; border-radius: 16px; background: var(--fill); }
+.hotkey-row { gap: 10px; color: var(--t2); }
+.hotkey-row > svg { width: 16px; height: 16px; }
+.hotkey-label { margin-right: auto; font: 600 13.5px var(--f-ui); letter-spacing: 0; color: var(--t1); }
+.hotkey-row kbd { height: 26px; padding: 0 9px; display: inline-grid; place-items: center; border: 0; border-radius: 8px; background: var(--fill-2); color: var(--t1); font: 600 12px var(--f-ui); }
+.hotkey-row kbd.hotkey-listening { box-shadow: inset 0 0 0 1.5px var(--heat-line); }
+.hotkey-off, .hotkey-note { font-size: 12.5px; color: var(--t3); }
+
+@media (max-width: 1180px) { .live-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 900px) { .live-setup .optgrid { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .live-badge .dot { animation: none; } .remember:active { transform: none; } }
+.remember span { font-size: 24px; max-width: 140px; }
+
+@media (max-width: 1100px) {
+  .live-explain, .live-grid { grid-template-columns: minmax(0, 1fr); }
+}

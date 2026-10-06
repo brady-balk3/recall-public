@@ -11,5 +11,5 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts", "electron", "build/third-party-notices.ts"]
+  "include": ["vite.config.ts", "vitest.config.ts", "electron", "build/third-party-notices.ts", "build/opencut-aliases.ts"]
 }

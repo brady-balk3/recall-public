@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Brady Balk
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { apiUrl } from "../lib/api";
-import { AlertTriangle, BarChart3, Check, Clock, Film, HardDrive, Play, Plus, RefreshCw, RotateCcw, Scissors, Search, Settings, Sparkles, Target, Trash2, Video, X } from "../lib/icons";
+import { AlertTriangle, BarChart3, Check, Clock, Film, Play, Plus, RefreshCw, RotateCcw, Scissors, Search, Settings, Sparkles, Target, Trash2, Video, X } from "../lib/icons";
 import {
   addClipToCompilationProject,
   listCompilationProjects,
@@ -42,10 +42,17 @@ import {
 } from "../lib/memoryRefinement";
 import { fmtClock } from "../lib/format";
 
-const STARTER_QUERIES = [
+export const STARTER_QUERIES = [
   "funny reactions with friends",
   "close calls I somehow survived",
   "scary moments that made me scream",
+];
+
+/** The three things Memory reads, each with a search worth trying first. */
+const ASK_LANES = [
+  { lane: "What you said", query: "I can't believe that worked", hint: "Quotes and names, word for word." },
+  { lane: "What chat did", query: "chat losing it over a misplay", hint: "The moments chat blew up about." },
+  { lane: "What happened", query: STARTER_QUERIES[1], hint: "Describe it loosely. Concept search finds the feeling." },
 ];
 
 type MemorySort = "relevance" | "clips" | "newest" | "oldest";
@@ -216,11 +223,14 @@ export default function StreamMemory({
   onOpenClip,
   onOpenMoment,
   onOpenCompilations,
+  initialQuery,
 }: {
   apiEndpoint?: string;
   onOpenClip: (jobId: string, clipId: string) => void | Promise<void>;
   onOpenMoment?: (result: MemoryResult, query: string) => void | Promise<void>;
   onOpenCompilations?: () => void;
+  /** A search handed over from elsewhere (Ctrl K). A new nonce runs it again. */
+  initialQuery?: { text: string; nonce: number };
 }) {
   const [stats, setStats] = useState<MemoryStats | null>(null);
   const [query, setQuery] = useState("");
@@ -469,6 +479,15 @@ export default function StreamMemory({
       setSearching(false);
     }
   };
+
+  const handedOverQuery = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!initialQuery || handedOverQuery.current === initialQuery.nonce) return;
+    handedOverQuery.current = initialQuery.nonce;
+    setQuery(initialQuery.text);
+    void runSearch(initialQuery.text);
+    // runSearch reads the current filters; only a new hand-over should re-run it.
+  }, [initialQuery]);
 
   const search = async (event?: FormEvent) => {
     event?.preventDefault();
@@ -838,107 +857,94 @@ export default function StreamMemory({
   const missingSessions = Math.max(0, (stats?.completed_jobs ?? 0) - (stats?.indexed_jobs ?? 0));
 
   return (
-    <section className={`memory-workspace ${toolsOpen ? "is-tools-open" : ""}`} aria-labelledby="memory-title">
-      <header className="memory-command">
-        <div className="memory-command-copy">
-          <h1 id="memory-title">Stream Memory</h1>
-          <p>Ask for the moment you remember—even when you cannot remember the exact words.</p>
-        </div>
-        <div className={`memory-health is-${buildingConcepts ? "building" : stats?.semantic_status ?? "not-built"}`}>
-          <span className="memory-health-dot" aria-hidden="true" />
-          <span>
-            <strong>{buildingConcepts ? "Learning your archive" : semanticLabel(stats)}</strong>
-            <small>
-              {buildingConcepts
-                ? `${((stats?.transcript_entries ?? 0) + (stats?.clip_entries ?? 0) + (stats?.evidence_entries ?? 0)).toLocaleString()} moments · usually 3–6 minutes · search stays available`
-                : stats?.semantic_available
-                ? `${stats.semantic_entries.toLocaleString()} moments · ${formatBytes(stats.semantic_index_bytes + stats.semantic_model_bytes)} model + index · stored locally`
-                : "A compact local index; no recordings are copied"}
-            </small>
-          </span>
-          <button type="button" onClick={buildConcepts} disabled={buildingConcepts || !stats?.indexed_jobs} aria-label={buildingConcepts ? `Learning archive, ${formatBuildElapsed(buildElapsedSeconds)} elapsed` : undefined}>
-            {buildingConcepts ? <Clock size={14} aria-hidden="true" /> : <Sparkles size={14} aria-hidden="true" />}
-            {buildingConcepts ? `Learning ${formatBuildElapsed(buildElapsedSeconds)}` : stats?.semantic_available ? "Update" : "Build"}
-          </button>
-        </div>
-
-        <form className="memory-search" onSubmit={search}>
-          <label className="memory-search-field">
-            <Search size={21} aria-hidden="true" />
-            <input
-              ref={searchInputRef}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder='Try “the close call where everyone started yelling”'
-              aria-label="Search Stream Memory"
-            />
-            <kbd>Enter</kbd>
-          </label>
-          <button className="cta-accent" type="submit" disabled={searching}>
-            {searching ? "Searching…" : "Search memory"}
+    <section className={`page memory2 ${toolsOpen ? "is-tools-open" : ""}`} aria-labelledby="memory-title">
+      <header className="mem-hero">
+        <h1 className="disp" id="memory-title">What do you remember?</h1>
+        <p className="mem-lede">Describe it however you remember it. Recall checks what you said, what chat did, and what was on screen.</p>
+        <form className="msearch glass" onSubmit={search}>
+          <Search aria-hidden="true" />
+          <input
+            ref={searchInputRef}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="The close call where everyone started yelling…"
+            aria-label="Search Stream Memory"
+          />
+          <button className="btn heat" type="submit" disabled={searching}>
+            {searching ? "Searching…" : "Search"}
           </button>
         </form>
-
-        <div className="memory-starters" aria-label="Example memory searches">
-          <span>Try a memory</span>
-          {STARTER_QUERIES.map((starter) => (
-            <button type="button" key={starter} onClick={() => useStarterQuery(starter)}>
-              {starter}
-            </button>
-          ))}
-        </div>
-
-        <div className="memory-ledger" aria-label="Memory index summary">
-          <span><strong>{stats?.indexed_jobs ?? 0}</strong> sessions remembered</span>
-          <span><strong>{(stats?.transcript_entries ?? 0).toLocaleString()}</strong> spoken moments</span>
-          <span><strong>{(stats?.clip_entries ?? 0).toLocaleString()}</strong> saved clips</span>
-          <span><strong>{(stats?.evidence_entries ?? 0).toLocaleString()}</strong> evidence packs</span>
-          <span><HardDrive size={13} aria-hidden="true" /> Derived locally, no media copies</span>
-        </div>
-      </header>
-
-      <div className="memory-toolbar">
-        <div className="memory-filter-group" aria-label="Search mode">
-          {(["hybrid", "keyword"] as MemorySearchMode[]).map((value) => (
-            <button type="button" key={value} className={mode === value ? "is-active" : ""} aria-pressed={mode === value} onClick={() => setMode(value)}>
-              {value === "hybrid" ? "Meaning + words" : "Exact words"}
-            </button>
-          ))}
-        </div>
-        <div className="memory-filter-group" aria-label="Result type">
-          {(["all", "transcript", "clip", "evidence"] as MemoryKind[]).map((value) => (
-            <button type="button" key={value} className={kind === value ? "is-active" : ""} aria-pressed={kind === value} onClick={() => setKind(value)}>
-              {value === "all" ? "Everything" : value === "transcript" ? "Conversation" : value === "clip" ? "Clips" : "Evidence"}
-            </button>
-          ))}
-        </div>
-        <label className="memory-decision-filter">
-          <span>Review state</span>
-          <select value={decision} onChange={(event) => setDecision(event.target.value as MemoryDecision)}>
-            <option value="all">All</option>
+        <div className="mem-controls">
+          <div className="seg" role="group" aria-label="Search mode">
+            {(["hybrid", "keyword"] as MemorySearchMode[]).map((value) => (
+              <button type="button" key={value} aria-pressed={mode === value} onClick={() => setMode(value)}>
+                {value === "hybrid" ? "Meaning + words" : "Exact words"}
+              </button>
+            ))}
+          </div>
+          <div className="seg" role="group" aria-label="Result type">
+            {(["all", "transcript", "clip", "evidence"] as MemoryKind[]).map((value) => (
+              <button type="button" key={value} aria-pressed={kind === value} onClick={() => setKind(value)}>
+                {value === "all" ? "Everything" : value === "transcript" ? "Conversation" : value === "clip" ? "Clips" : "Evidence"}
+              </button>
+            ))}
+          </div>
+          <select className="field mem-decision" value={decision} onChange={(event) => setDecision(event.target.value as MemoryDecision)} aria-label="Review state">
+            <option value="all">Any review state</option>
             <option value="kept">Kept</option>
             <option value="maybe">Maybe</option>
             <option value="passed">Passed</option>
             <option value="unreviewed">Unreviewed</option>
           </select>
-        </label>
-        <button
-          className={`btn-secondary memory-tools-button ${toolsOpen ? "is-active" : ""}`}
-          type="button"
-          aria-expanded={toolsOpen}
-          aria-controls="memory-tools"
-          onClick={() => setToolsOpen((open) => !open)}
-        >
-          <Settings size={14} aria-hidden="true" />
-          Archive tools
-          {missingSessions > 0 && <span aria-label={`${missingSessions} sessions not yet indexed`}>{missingSessions}</span>}
-        </button>
-      </div>
+        </div>
+      </header>
+
+      <section className="mem-archive glass" aria-label="Your archive">
+        <p className="mem-ledger">
+          {!stats ? "Waiting for Recall's engine to read your archive."
+            : stats.indexed_jobs ? (
+              <>
+                Recall remembers <b className="num">{stats.indexed_jobs} {stats.indexed_jobs === 1 ? "stream" : "streams"}</b>
+                {": "}<b className="num">{stats.transcript_entries.toLocaleString()}</b> spoken moments,{" "}
+                <b className="num">{stats.clip_entries.toLocaleString()}</b> saved clips
+                {stats.evidence_entries ? <>, <b className="num">{stats.evidence_entries.toLocaleString()}</b> evidence packs</> : null}.
+              </>
+            ) : "Nothing remembered yet. Every scan you finish adds itself here."}
+        </p>
+        <span className="sp" />
+        <div className={`mem-health is-${buildingConcepts ? "building" : stats?.semantic_status ?? "not-built"}`}>
+          <span className="mem-health-copy">
+            <b><i className="mem-dot" aria-hidden="true" />{buildingConcepts ? "Learning your archive" : semanticLabel(stats)}</b>
+            <small>
+              {buildingConcepts
+                ? `${((stats?.transcript_entries ?? 0) + (stats?.clip_entries ?? 0) + (stats?.evidence_entries ?? 0)).toLocaleString()} moments · usually 3–6 minutes · search stays available`
+                : stats?.semantic_available
+                ? `${stats.semantic_entries.toLocaleString()} moments · ${formatBytes(stats.semantic_index_bytes + stats.semantic_model_bytes)} on this PC`
+                : "A compact local index. No recordings are copied."}
+            </small>
+          </span>
+          <button type="button" className="btn sm" onClick={buildConcepts} disabled={buildingConcepts || !stats?.indexed_jobs} aria-label={buildingConcepts ? `Learning archive, ${formatBuildElapsed(buildElapsedSeconds)} elapsed` : undefined}>
+            {buildingConcepts ? <Clock aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
+            {buildingConcepts ? `Learning ${formatBuildElapsed(buildElapsedSeconds)}` : stats?.semantic_available ? "Update" : "Build concept search"}
+          </button>
+          <button
+            className={`btn sm ${toolsOpen ? "is-on" : "ghost"}`}
+            type="button"
+            aria-expanded={toolsOpen}
+            aria-controls="memory-tools"
+            onClick={() => setToolsOpen((open) => !open)}
+          >
+            <Settings aria-hidden="true" />
+            Archive tools
+            {missingSessions > 0 && <span className="badge heat num" aria-label={`${missingSessions} sessions not yet indexed`}>{missingSessions}</span>}
+          </button>
+        </div>
+      </section>
 
       {toolsOpen && (
-        <div className="memory-tools" id="memory-tools">
+        <div className="memory-tools panel glass" id="memory-tools">
           <div
-            className="memory-tools-tabs"
+            className="seg memory-tools-tabs"
             role="tablist"
             aria-label="Archive tools"
             onKeyDown={navigateToolTabs}
@@ -997,7 +1003,7 @@ export default function StreamMemory({
                   recording and never starts a scan.
                 </span>
               </div>
-              <button className="btn-secondary memory-index-button" type="button" onClick={indexLibrary} disabled={indexing}>
+              <button className="btn sm memory-index-button" type="button" onClick={indexLibrary} disabled={indexing}>
                 <RefreshCw size={14} aria-hidden="true" />
                 {indexing ? "Updating archive…" : missingSessions ? `Add ${missingSessions} session${missingSessions === 1 ? "" : "s"}` : "Update archive"}
               </button>
@@ -1032,7 +1038,7 @@ export default function StreamMemory({
               <span>Also called</span>
               <input value={aliasTerm} onChange={(event) => setAliasTerm(event.target.value)} maxLength={80} placeholder="KevPlays" />
             </label>
-            <button className="btn-secondary" type="submit" disabled={savingAlias}>
+            <button className="btn sm" type="submit" disabled={savingAlias}>
               {savingAlias ? "Saving…" : "Connect terms"}
             </button>
           </form>
@@ -1084,7 +1090,7 @@ export default function StreamMemory({
             ) : <span>No baseline saved yet</span>}
           </div>
           <button
-            className="btn-secondary memory-evaluation-run"
+            className="btn sm memory-evaluation-run"
             type="button"
             onClick={() => void runBaseline()}
             disabled={runningEvaluation || !(evaluation?.scorable_cases)}
@@ -1122,7 +1128,7 @@ export default function StreamMemory({
       )}
 
       {(unavailable.archive || degradedTools.length > 0) && (
-        <div className="memory-degraded" role="status">
+        <div className="memory-degraded notice glass" role="status">
           <AlertTriangle size={15} aria-hidden="true" />
           <span>
             <strong>
@@ -1132,11 +1138,11 @@ export default function StreamMemory({
             </strong>
             <small>
               {unavailable.archive
-                ? "Searching, indexing, and the archive summary all need the local engine. Nothing in your archive was lost — start Recall’s engine, then try again."
+                ? "Searching, indexing, and the archive summary all need the local engine. Nothing in your archive was lost. Start Recall’s engine, then try again."
                 : "Search still works. Reopen Archive tools after retrying."}
             </small>
           </span>
-          <button type="button" className="btn-secondary" onClick={retryUnavailable}>
+          <button type="button" className="btn sm" onClick={retryUnavailable}>
             <RefreshCw size={13} aria-hidden="true" /> Try again
           </button>
         </div>
@@ -1154,19 +1160,32 @@ export default function StreamMemory({
       )}
 
       {!searchedQuery && !results.length ? (
-        <div className="memory-empty">
-          <div className="memory-empty-signal" aria-hidden="true"><i /><i /><Sparkles size={27} /><i /><i /></div>
-          <h2>Your archive is listening</h2>
-          <p>Search names and quotes exactly, or build the concept index to find moments by what happened and how they felt.</p>
-          {missingSessions > 0 && (
-            <button className="btn-secondary" type="button" onClick={indexLibrary} disabled={indexing}>
-              Add {missingSessions} existing session{missingSessions === 1 ? "" : "s"}
-            </button>
-          )}
-        </div>
+        <section className="mem-ask" aria-label="Things to ask">
+          <span className="eyebrow">Try asking</span>
+          <div className="mem-ask-grid">
+            {ASK_LANES.map(({ lane, query: example, hint }) => (
+              <button type="button" className="mem-ask-card glass" key={lane} onClick={() => useStarterQuery(example)}>
+                <span className="lane">{lane}</span>
+                <b>“{example}”</b>
+                <small>{hint}</small>
+                <Search aria-hidden="true" />
+              </button>
+            ))}
+          </div>
+          {missingSessions > 0 ? (
+            <p className="mem-ask-foot">
+              {missingSessions} finished {missingSessions === 1 ? "scan isn't" : "scans aren't"} in Memory yet.
+              <button className="btn sm" type="button" onClick={indexLibrary} disabled={indexing}>
+                Add {missingSessions === 1 ? "it" : `all ${missingSessions}`}
+              </button>
+            </p>
+          ) : stats && !stats.semantic_available && stats.indexed_jobs > 0 ? (
+            <p className="mem-ask-foot">Exact words work now. Build concept search above to ask by feeling too.</p>
+          ) : null}
+        </section>
       ) : !results.length ? (
-        <div className="memory-empty memory-empty-search">
-          <h2>No trail for “{searchedQuery}”</h2>
+        <div className="memory-empty memory-empty-search empty glass">
+          <h3 className="disp">Nothing matched “{searchedQuery}” yet</h3>
           <p>Try fewer details, switch to Meaning + words, or update the archive after a new scan.</p>
           <form className="memory-miss-form" onSubmit={saveFailedSearch}>
             <label htmlFor="memory-expected-result">What should Recall have found?</label>
@@ -1178,16 +1197,16 @@ export default function StreamMemory({
                 maxLength={500}
                 placeholder="The sniper shot near the end of the match"
               />
-              <button className="btn-secondary" type="submit" disabled={savingMiss || !expectedMemory.trim()}>
+              <button className="btn sm" type="submit" disabled={savingMiss || !expectedMemory.trim()}>
                 {savingMiss ? "Saving…" : "Save failed search"}
               </button>
             </div>
-            <small>This stores text and a search label only—never another copy of the recording.</small>
+            <small>This stores text and a search label only, never another copy of the recording.</small>
           </form>
         </div>
       ) : (
         <div className="memory-results-layout">
-          <div className="memory-results" aria-label={`${results.length} search results`}>
+          <div className="memory-results panel glass" aria-label={`${results.length} search results`}>
             <div className="memory-results-count">
               <span><strong>{results.length}</strong> memories for “{searchedQuery}”</span>
               <div className="memory-results-tools">
@@ -1246,7 +1265,7 @@ export default function StreamMemory({
                   aria-labelledby="memory-refine-title"
                 />
               </label>
-              <button type="submit" className="btn-secondary" disabled={refining || !refinement.trim()}>
+              <button type="submit" className="btn sm" disabled={refining || !refinement.trim()}>
                 {refining ? "Refining…" : "Refine results"}
               </button>
               {refinementStack.length > 0 && (
@@ -1328,7 +1347,7 @@ export default function StreamMemory({
           </div>
 
           {selected && (
-            <aside className="memory-detail">
+            <aside className="memory-detail panel glass">
               <div className="memory-player">
                 {sourceUrl ? (
                   <video key={sourceUrl} ref={videoRef} controls preload="metadata" src={sourceUrl} onLoadedMetadata={() => { if (videoRef.current) videoRef.current.currentTime = selected.start_time; }} />
@@ -1342,14 +1361,14 @@ export default function StreamMemory({
               </div>
               <div className="memory-actions" aria-label="Use this memory">
                 {selected.clip_id ? (
-                  <button type="button" className="cta-accent" onClick={() => {
+                  <button type="button" className="btn heat" onClick={() => {
                     recordOpen(selected);
                     void onOpenClip(selected.job_id, selected.clip_id!);
                   }}>
                     <Play size={13} aria-hidden="true" /> Open in Theater
                   </button>
                 ) : onOpenMoment ? (
-                  <button type="button" className="cta-accent" onClick={() => {
+                  <button type="button" className="btn heat" onClick={() => {
                     recordOpen(selected);
                     void onOpenMoment(selected, searchedQuery);
                   }}>
@@ -1362,12 +1381,12 @@ export default function StreamMemory({
                   </button>
                 ) : null}
                 {selected.clip_id && selected.kept && (
-                  <button type="button" className="btn-secondary" onClick={() => void openCompilationPicker()} disabled={compilationBusy}>
+                  <button type="button" className="btn sm" onClick={() => void openCompilationPicker()} disabled={compilationBusy}>
                     <Plus size={13} aria-hidden="true" /> Add to compilation
                   </button>
                 )}
                 {!selected.source_available && !selected.clip_id && (
-                  <small>The VOD Editor will show source status and Twitch restoration when available. Your searchable evidence stays available either way.</small>
+                  <small>The Cutting Room will show source status and Twitch restoration when available. Your searchable evidence stays available either way.</small>
                 )}
                 {compilationPickerOpen && (
                   <div className="memory-compilation-picker">
@@ -1380,12 +1399,12 @@ export default function StreamMemory({
                           <select value={compilationProjectId} onChange={(event) => setCompilationProjectId(event.target.value)}>
                             {compilationProjects.map((project) => (
                               <option key={project.id} value={project.id}>
-                                {project.title}{project.status === "approved" ? " — reopens as draft" : ""}
+                                {project.title}{project.status === "approved" ? " · reopens as draft" : ""}
                               </option>
                             ))}
                           </select>
                         </label>
-                        <button type="button" className="btn-secondary" disabled={!compilationProjectId || compilationBusy} onClick={() => void addSelectedToCompilation()}>
+                        <button type="button" className="btn sm" disabled={!compilationProjectId || compilationBusy} onClick={() => void addSelectedToCompilation()}>
                           {compilationBusy ? "Adding…" : "Add to draft"}
                         </button>
                       </>
@@ -1393,7 +1412,7 @@ export default function StreamMemory({
                       <span>No compilation drafts yet. Create one, then return to add this clip.</span>
                     ) : null}
                     {!compilationProjects.length && onOpenCompilations && !compilationBusy && (
-                      <button type="button" className="btn-secondary" onClick={onOpenCompilations}>Open Compilations</button>
+                      <button type="button" className="btn sm" onClick={onOpenCompilations}>Open Compilations</button>
                     )}
                   </div>
                 )}
@@ -1409,7 +1428,7 @@ export default function StreamMemory({
                     <Sparkles size={11} aria-hidden="true" />{matchSourceLabel(selected)}
                   </span>
                 </div>
-                <h2>{selected.title}</h2>
+                <h2 className="disp">{selected.title}</h2>
                 <p>{resultContext(selected)}</p>
                 <div className="memory-detail-meta">
                   <span>{selected.session_name}</span>
@@ -1440,7 +1459,7 @@ export default function StreamMemory({
                     {evidenceClues(selected).length > 0 && (
                       <div className="memory-evidence" aria-label="Evidence on hand">
                         <small>
-                          <b>Evidence on hand</b> — compact clues retained from this scan, not
+                          <b>Evidence on hand:</b> compact clues retained from this scan, not
                           another video copy.
                         </small>
                         <div>

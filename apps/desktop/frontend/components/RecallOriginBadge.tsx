@@ -7,7 +7,7 @@ export function recallOriginCopy(provenance: RecallProvenance) {
   if (provenance.source === "stream_memory") {
     return {
       label: "Found in Memory",
-      detail: "You opened this moment from Stream Memory and finished the cut in the VOD Editor.",
+      detail: "You opened this moment from Stream Memory and finished the cut in the Cutting Room.",
     };
   }
   return provenance.origin === "creator_marker"

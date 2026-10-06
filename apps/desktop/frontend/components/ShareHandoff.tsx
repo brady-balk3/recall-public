@@ -79,9 +79,9 @@ export function ShareHandoffDialog({
         <div className="share-head">
           <span className="share-done" aria-hidden="true"><Check size={13} /></span>
           <div>
-            <h2 id="share-handoff-title">{plural(count, "clip")} exported</h2>
+            <h2 id="share-handoff-title" className="disp">{plural(count, "clip")} exported</h2>
             <p id="share-handoff-description">
-              The files are on your machine. Recall opens the upload page — you drop the clip in and post it there.
+              The files are on your machine. Recall opens the upload page, you drop the clip in and post it there.
             </p>
           </div>
         </div>
@@ -114,7 +114,7 @@ export function ShareHandoffDialog({
 
         <div className="share-foot">
           <p className="share-note">Posting still happens in your browser. Recall never uploads your video.</p>
-          <button type="button" className="btn-secondary" onClick={onClose}>Done</button>
+          <button type="button" className="btn heat" onClick={onClose}>Done</button>
         </div>
       </div>
     </div>

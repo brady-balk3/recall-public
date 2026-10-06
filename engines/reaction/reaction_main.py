@@ -3109,6 +3109,9 @@ def build_reaction_clips(
             "crowd_clip": int(c.get("crowd_clip", 0) or 0),
             "creator_protected": bool(c.get("creator_protected")),
             "manual_anchor": bool(c.get("manual_anchor")),
+            # select_clips gates on this (speech the ASR never heard), so a
+            # replay without it re-admits candidates the live run held back.
+            "speech_unheard": bool(c.get("speech_unheard")),
             "recall_marker_ids": list(c.get("recall_marker_ids") or []),
             "recall_marker_time": _round_or_none(c.get("recall_marker_time"), 3),
             "active_channel_count": c.get("active_channel_count"),

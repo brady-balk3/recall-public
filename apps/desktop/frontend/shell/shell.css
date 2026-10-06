@@ -1,0 +1,431 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* The shell: floating glass sidebar, window chrome, Ctrl K. */
+
+:root {
+  --shell-sidebar: 252px;
+  --shell-gap: 12px;
+  /* The drag strip's height; pages start below it. */
+  --shell-top: 40px;
+  /* Surfaces that sit beside the sidebar, or below the drag strip, offset by these. */
+  --studio-sidebar-w: calc(var(--shell-sidebar) + var(--shell-gap));
+  --studio-topbar-h: var(--shell-top);
+}
+/* Recall's smallest supported window is 1024 wide; give the page the room. */
+@media (max-width: 1240px) {
+  :root { --shell-sidebar: 224px; }
+}
+
+/* ── layout ── */
+#app-container {
+  display: grid;
+  grid-template-columns: calc(var(--shell-sidebar) + var(--shell-gap)) minmax(0, 1fr);
+  height: 100vh;
+}
+#app-container > main {
+  min-width: 0;
+  padding-top: var(--shell-top);
+  background: transparent;
+}
+
+/* ── window chrome ── */
+.shell-drag {
+  position: fixed;
+  top: 0;
+  left: calc(var(--shell-sidebar) + var(--shell-gap) * 2);
+  right: 150px;
+  height: 34px;
+  z-index: 15;
+  -webkit-app-region: drag;
+}
+.shell-win {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  -webkit-app-region: no-drag;
+}
+.shell-win button {
+  width: 46px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--t3);
+  cursor: pointer;
+  transition: background-color var(--dur-1) ease, color var(--dur-1) ease;
+}
+.shell-win button:hover { background: var(--fill); color: var(--t1); }
+.shell-win button.is-close:hover { background: #C42B1C; color: #fff; }
+.shell-win svg { width: 12px; height: 12px; }
+
+/* ── sidebar ── */
+#app-container > aside.sidebar {
+  width: auto;
+  height: calc(100vh - var(--shell-gap) * 2);
+  margin: var(--shell-gap) 0 var(--shell-gap) var(--shell-gap);
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+  z-index: 20;
+  border: 0;
+  border-radius: 26px;
+  background-color: transparent;
+  color: var(--t1);
+  scrollbar-width: none;
+}
+#app-container > aside.sidebar::-webkit-scrollbar { display: none; }
+
+.sidebar button {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.sidebar button:focus-visible { outline: 2px solid var(--h2); outline-offset: 1px; box-shadow: none; }
+
+.sb-me {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  margin-bottom: 10px;
+  border-radius: 16px;
+  transition: background-color var(--dur-1) ease;
+}
+.sb-me:hover { background: var(--fill); }
+.sb-who { min-width: 0; }
+.sb-who b { display: block; font-size: 15px; font-weight: 650; line-height: 1.25; }
+.sb-who small { display: block; font-size: 12px; color: var(--t3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.lav {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--heat);
+  color: var(--heat-ink);
+  font-family: var(--f-disp);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.lav.has-photo { overflow: hidden; background: var(--fill-2); }
+.lav img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* New stream: split button */
+.sb-new-wrap { position: relative; display: flex; gap: 2px; margin-bottom: 10px; }
+.sidebar .sb-new,
+.sidebar .sb-new-more {
+  height: 42px;
+  background: var(--lg-heat-sheen), var(--heat);
+  color: var(--heat-ink);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), inset 0 -2px 6px rgba(0, 0, 0, .15), 0 10px 26px -8px var(--heat-glow);
+  transition: filter var(--dur-1) ease, transform var(--dur-1) var(--ease-out);
+}
+.sidebar .sb-new {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px 0 12px;
+  border-radius: 12px 4px 4px 12px;
+  font-weight: 650;
+  font-size: 14px;
+}
+.sidebar .sb-new-more {
+  width: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px 12px 12px 4px;
+}
+.sidebar .sb-new:hover,
+.sidebar .sb-new-more:hover { filter: brightness(1.07); }
+.sidebar .sb-new:active,
+.sidebar .sb-new-more:active { transform: scale(.97); }
+.sb-new-more svg { opacity: .8; transition: transform var(--dur-2) var(--ease-out); }
+.sb-new-more[aria-expanded="true"] svg { transform: rotate(180deg); }
+.sb-plus {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--heat-ink);
+  color: var(--h2);
+}
+
+.sb-menu {
+  position: fixed;
+  z-index: 80;
+  color: var(--t1);
+  width: 300px;
+  padding: 6px;
+  border-radius: 18px;
+  /* transform-origin is set under the chevron that opened it (Sidebar.tsx) */
+  animation: shell-pop var(--dur-2) var(--ease-out);
+}
+.sb-menu button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border-radius: 12px;
+}
+.sb-menu button:hover,
+.sb-menu button:focus-visible { background: var(--fill-2); outline: none; box-shadow: none; }
+.sb-menu-ic {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--fill);
+}
+.sb-menu b { display: block; font-size: 13.5px; font-weight: 600; }
+.sb-menu small { display: block; font-size: 12px; color: var(--t3); }
+.sb-menu-sep { height: 1px; margin: 4px 8px; background: var(--stroke); }
+
+.sidebar .sb-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 8px 0 12px;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  background: var(--fill);
+  color: var(--t3);
+  font-size: 13.5px;
+  transition: background-color var(--dur-1) ease, color var(--dur-1) ease;
+}
+.sidebar .sb-search:hover { background: var(--fill-2); color: var(--t2); }
+.sb-search > span { flex: 1; }
+
+.sidebar kbd,
+.palette kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--fill-2);
+  color: var(--t3);
+  font: 600 10.5px/1 var(--f-ui);
+  box-shadow: inset 0 -1px 0 var(--stroke);
+}
+
+.sb-group { display: grid; gap: 2px; }
+.sb-h { padding: 14px 12px 4px; font-size: 12px; font-weight: 600; color: var(--t4); }
+
+.sidebar .sb-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 12px;
+  font-size: 14.5px;
+  font-weight: 500;
+  color: var(--t2);
+  transition: background-color var(--dur-1) ease, color var(--dur-1) ease, transform var(--dur-1) var(--ease-out);
+}
+.sidebar .sb-item:hover { background: var(--fill); color: var(--t1); }
+.sidebar .sb-item:active { transform: scale(.97); }
+.sidebar .sb-item.on {
+  background: var(--lg-selected);
+  box-shadow: var(--lg-selected-bevel);
+  color: var(--t1);
+}
+.sb-ic { width: 19px; height: 19px; flex: 0 0 auto; color: var(--t3); }
+.sb-item.on .sb-ic { color: var(--h3); }
+.sb-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.sb-n {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: var(--fill-2);
+  color: var(--t2);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.sb-n.heat {
+  background: var(--lg-heat-sheen), var(--heat);
+  color: var(--heat-ink);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), 0 6px 16px -6px var(--heat-glow);
+}
+.sb-meta { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--t2); }
+.sb-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--live);
+  animation: shell-pulse 1.6s ease infinite;
+}
+
+.sb-ring { transform: rotate(-90deg); flex: 0 0 auto; }
+.sb-ring circle { fill: none; stroke-width: 3; }
+.sb-ring .bg { stroke: var(--fill-3); }
+.sb-ring .fg { stroke: var(--h2); stroke-linecap: round; transition: stroke-dashoffset .8s linear; }
+
+.sb-spacer { flex: 1; min-height: 12px; }
+
+.sidebar .sb-scan {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  margin-bottom: 8px;
+  border-radius: 16px;
+  background: var(--fill);
+  transition: background-color var(--dur-1) ease;
+}
+.sidebar .sb-scan:hover { background: var(--fill-2); }
+.sb-scan-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--t3); }
+.sb-scan-label { font-weight: 600; color: var(--t2); }
+.sb-scan b { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-bar { height: 4px; border-radius: 2px; background: var(--fill-2); overflow: hidden; }
+.sb-bar i { display: block; height: 100%; border-radius: inherit; background: var(--heat); transform-origin: left center; transition: transform .8s linear; }
+
+/* ── Ctrl K ── */
+.pal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+}
+.palette {
+  position: fixed;
+  z-index: 71;
+  top: 84px;
+  left: 50%;
+  width: min(660px, 92vw);
+  translate: -50% 0;
+  border-radius: 26px;
+  overflow: hidden;
+  color: var(--t1);
+  /* No entrance: Ctrl K is opened from the keyboard all day, and motion there reads as lag. */
+}
+.pal-in {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 62px;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--stroke);
+}
+.pal-in-ic { width: 21px; height: 21px; color: var(--t3); flex: 0 0 auto; }
+.pal-in input {
+  flex: 1;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--t1);
+  font: 400 16px var(--f-ui);
+  user-select: text;
+}
+.pal-in input::placeholder { color: var(--t3); }
+/* The dialog is the focus context; a ring around the only field is noise. */
+.pal-in input:focus-visible { outline: none; box-shadow: none; }
+.pal-list { max-height: 56vh; overflow-y: auto; padding: 8px; }
+.pal-sec { padding: 10px 12px 6px; font-size: 12px; font-weight: 600; color: var(--t3); }
+.pal-item {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 14px;
+  cursor: pointer;
+}
+.pal-item.on { background: var(--lg-selected); box-shadow: var(--lg-selected-bevel); }
+.pal-ic {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--fill-2) center / cover no-repeat;
+  color: var(--t2);
+}
+.pal-item.on .pal-ic:not(.img) { background: var(--heat); color: var(--heat-ink); }
+.pal-text { min-width: 0; }
+.pal-text b { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pal-text small { display: block; color: var(--t3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pal-empty { padding: 24px; text-align: center; color: var(--t3); }
+.pal-foot {
+  display: flex;
+  gap: 18px;
+  padding: 10px 22px;
+  border-top: 1px solid var(--stroke);
+  font-size: 12px;
+  color: var(--t3);
+}
+
+/* ── motion ── */
+@keyframes shell-pop {
+  from { opacity: 0; transform: scale(.96) translateY(-4px); }
+}
+@keyframes shell-fade {
+  from { opacity: 0; }
+}
+@keyframes shell-pulse {
+  50% { opacity: .35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-menu { animation: shell-fade 150ms ease; }
+  .sb-live-dot { animation: none; }
+  .sidebar .sb-item:active,
+  .sidebar .sb-new:active,
+  .sidebar .sb-new-more:active { transform: none; }
+}
+
+/* ── dialogs: thick reading glass over a dim scrim ──
+   The dialogs keep their own markup until their screens are rebuilt; this
+   gives them the material now. */
+#settings-modal,
+.project-modal,
+.hardware-setup-modal {
+  background: var(--scrim);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+.project-dialog,
+.settings-dialog.elev-2,
+.hardware-setup-dialog.elev-2 {
+  border: 0;
+  border-radius: 26px;
+  color: var(--t1);
+  background-image:
+    radial-gradient(360px circle at var(--mx, -400px) var(--my, -400px), var(--lg-highlight), transparent 45%),
+    var(--lg-fill-read);
+  -webkit-backdrop-filter: blur(16px) saturate(1.9) brightness(1.05);
+  backdrop-filter: url(#lg-lens) blur(6px) saturate(2) brightness(1.08);
+  box-shadow: var(--lg-bevel-float), var(--lg-drop-float);
+}
+.settings-dialog.elev-2::before,
+.hardware-setup-dialog.elev-2::before { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .project-dialog { animation: none; }
+}

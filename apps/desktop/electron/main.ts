@@ -66,8 +66,9 @@ let rememberHotkey: RememberHotkeyState = {
 let rememberApiPort = 0;
 let rememberApiToken = "";
 // Guarantees the splash reads as intentional rather than a flicker when the
-// backend happens to come up fast. The main window still loads in parallel.
-const SPLASH_MIN_MS = 900;
+// backend happens to come up fast, and lets the mark finish its reveal
+// (splash.html settles at ~1.3s). The main window still loads in parallel.
+const SPLASH_MIN_MS = 1300;
 // A renderer load can fail before Chromium emits ready-to-show. Never leave
 // the always-on-top splash covering an otherwise recoverable app indefinitely.
 const MAIN_WINDOW_REVEAL_TIMEOUT_MS = 15_000;
@@ -683,7 +684,7 @@ function createWindow() {
     minHeight: 700,
     title: "Recall",
     icon: iconPath,
-    backgroundColor: "#131017",
+    backgroundColor: "#000000",
     show: false,
     titleBarStyle: "hidden",
     titleBarOverlay: false,

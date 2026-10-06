@@ -9,6 +9,14 @@ import {
 } from "../lib/hardware";
 import { StateIcon, StudioButton } from "./StudioControls";
 
+/** What to say when a check fails: a dropped connection means the engine, not the PC. */
+function checkFailure(reason: unknown): string {
+  if (reason instanceof TypeError || (reason instanceof Error && /failed to fetch|networkerror|load failed/i.test(reason.message))) {
+    return "Recall's engine isn't answering, so this PC couldn't be checked.";
+  }
+  return reason instanceof Error ? reason.message : "Recall could not check this PC right now.";
+}
+
 export type CheckState = "checking" | "ready" | "error";
 
 function gpuLabel(capabilities: HardwareCapabilities): string {
@@ -119,7 +127,7 @@ export function HardwareCheckStep({
         setState("ready");
       })
       .catch((reason) => {
-        setError(reason instanceof Error ? reason.message : "Recall could not check this PC right now.");
+        setError(checkFailure(reason));
         setState("error");
       });
   };
@@ -137,7 +145,7 @@ export function HardwareCheckStep({
       })
       .catch((reason) => {
         if (!active) return;
-        setError(reason instanceof Error ? reason.message : "Recall could not check this PC right now.");
+        setError(checkFailure(reason));
         setState("error");
       });
     return () => {
@@ -242,7 +250,7 @@ export function useHardwareCheck(apiEndpoint: string, active: boolean) {
         setState("ready");
       })
       .catch((reason) => {
-        setError(reason instanceof Error ? reason.message : "Recall could not check this PC right now.");
+        setError(checkFailure(reason));
         setState("error");
       });
   };
@@ -260,7 +268,7 @@ export function useHardwareCheck(apiEndpoint: string, active: boolean) {
       })
       .catch((reason) => {
         if (!mounted) return;
-        setError(reason instanceof Error ? reason.message : "Recall could not check this PC right now.");
+        setError(checkFailure(reason));
         setState("error");
       });
     return () => {
@@ -315,7 +323,7 @@ export function HardwareProbeCard({
           <span>{subtitle}</span>
         </span>
         {state !== "checking" && (
-          <button className="onboarding-redo" type="button" onClick={onRecheck}>Re-check</button>
+          <button className="btn sm ghost onboarding-redo" type="button" onClick={onRecheck}>Check again</button>
         )}
       </div>
       <dl className="onboarding-facts" style={{ opacity: state === "ready" && capabilities ? 1 : 0.35 }}>
@@ -381,7 +389,7 @@ export function HardwareSettingsPanel({
       })
       .catch((reason) => {
         if (!mounted) return;
-        setError(reason instanceof Error ? reason.message : "Recall could not check this PC right now.");
+        setError(checkFailure(reason));
       })
       .finally(() => {
         if (mounted) setChecking(false);
@@ -404,7 +412,7 @@ export function HardwareSettingsPanel({
     setError("");
     loadHardwareCapabilities(apiEndpoint, true)
       .then((result) => setCapabilities(result))
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "Recall could not check this PC right now."))
+      .catch((reason) => setError(checkFailure(reason)))
       .finally(() => setChecking(false));
   };
 
@@ -412,7 +420,7 @@ export function HardwareSettingsPanel({
     <section className="hardware-settings-panel" aria-labelledby="hardware-settings-title">
       <div className="hardware-settings-heading">
         <div>
-          <h3 id="hardware-settings-title">This PC</h3>
+          <h3 id="hardware-settings-title" className="sr-only">This PC</h3>
           <p>{capabilities ? checkedAtLabel(capabilities.checked_at) : "Recall chooses a safe processing route for this computer."}</p>
         </div>
         <StudioButton tone="ghost" loading={checking} icon={<RefreshCw size={14} />} onClick={rescan}>Run system check again</StudioButton>

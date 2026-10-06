@@ -36,3 +36,6 @@ __pycache__/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Synthetic dev-only media for ?fixtures (generated with ffmpeg testsrc2)
+/apps/desktop/frontend/dev/media/

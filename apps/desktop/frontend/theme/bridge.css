@@ -1,0 +1,85 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Bridge: the variable names the pre-overhaul stylesheets use (studio.css,
+   studio-components.css), defined in terms of theme/tokens.css. Screens that
+   have not been rebuilt yet still render in the new black-and-white system
+   with the creator's accent. Delete a name here once nothing reads it. */
+
+:root {
+  /* neutrals */
+  --surface: #070707;
+  --panel: #111112;
+  --elevated: #1A1A1C;
+  --card: #111112;
+  --control: #0B0B0C;
+  --rail: #070707;
+  --track: #1A1A1C;
+  --border: rgba(255, 255, 255, .09);
+  --border-strong: rgba(255, 255, 255, .18);
+  --ink: var(--t1);
+  --text: var(--t1);
+  --text-1: var(--t1);
+  --text-2: var(--t2);
+  --text-3: var(--t3);
+  --hover: rgba(255, 255, 255, .05);
+  --toggle-off: rgba(255, 255, 255, .16);
+  --backdrop: rgba(0, 0, 0, .66);
+
+  /* meaning */
+  --success: var(--keep);
+  --success-strong: var(--keep);
+  --success-soft: color-mix(in oklab, var(--keep) 13%, transparent);
+  --success-border: color-mix(in oklab, var(--keep) 38%, transparent);
+  --warning: var(--maybe);
+  --warning-strong: var(--maybe);
+  --warning-soft: color-mix(in oklab, var(--maybe) 14%, transparent);
+  --danger-soft: color-mix(in oklab, var(--danger) 12%, transparent);
+
+  /* accent */
+  --accent: var(--h2);
+  --accent-2: var(--h3);
+  --accent-hover: var(--h1);
+  --on-accent: var(--heat-ink);
+  --accent-soft: color-mix(in oklab, var(--h2) 14%, transparent);
+  --accent-wash: color-mix(in oklab, var(--h2) 8%, transparent);
+  --accent-border: color-mix(in oklab, var(--h2) 38%, transparent);
+  --accent-ring: color-mix(in oklab, var(--h2) 30%, transparent);
+  --accent-gradient: var(--heat);
+  --accent-gradient-hover: linear-gradient(100deg, var(--h1) 0%, var(--h1) 55%, var(--h2) 100%);
+  --accent-glow: 0 10px 30px -6px var(--heat-glow);
+  --accent-glow-strong: 0 14px 40px -6px var(--heat-glow);
+  --nav-active: var(--fill-2);
+
+  /* elevation */
+  --highlight: inset 0 1px 0 rgba(255, 255, 255, .07);
+  --highlight-strong: inset 0 1px 0 rgba(255, 255, 255, .12);
+  --shadow-card: 0 14px 34px rgba(0, 0, 0, .35), 0 3px 8px rgba(0, 0, 0, .3);
+  --shadow-soft: 0 26px 72px rgba(0, 0, 0, .5), 0 8px 22px rgba(0, 0, 0, .35);
+  --shadow-raw: rgba(0, 0, 0, .55);
+
+  /* type */
+  --font-body: var(--f-ui);
+  --font-ui: var(--f-ui);
+  --font-display: var(--f-disp);
+  --font-mono: var(--f-mono);
+}
+
+:root[data-theme="light"] {
+  --surface: #EDEDEF;
+  --panel: #FFFFFF;
+  --elevated: #FFFFFF;
+  --card: #F7F7F8;
+  --control: #FFFFFF;
+  --rail: #F7F7F8;
+  --track: #EDEDEF;
+  --border: rgba(0, 0, 0, .1);
+  --border-strong: rgba(0, 0, 0, .22);
+  --hover: rgba(0, 0, 0, .04);
+  --toggle-off: rgba(0, 0, 0, .16);
+  --backdrop: rgba(20, 20, 24, .36);
+
+  --highlight: inset 0 1px 0 rgba(255, 255, 255, .9);
+  --highlight-strong: inset 0 1px 0 rgba(255, 255, 255, 1);
+  --shadow-card: 0 8px 22px rgba(18, 18, 24, .08), 0 1px 3px rgba(18, 18, 24, .06);
+  --shadow-soft: 0 18px 44px rgba(18, 18, 24, .12), 0 3px 10px rgba(18, 18, 24, .08);
+  --shadow-raw: rgba(18, 18, 24, .12);
+}

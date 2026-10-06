@@ -1,0 +1,45 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Material pass for screens still on the pre-overhaul stylesheets.
+
+   Loaded after studio.css and studio-components.css. It restyles only their
+   shared primitives (buttons, raised panels, radii, headings), so every
+   screen not yet rebuilt reads as the same product: pill buttons, one accent,
+   glass cards, Sora headlines. Delete a rule when nothing uses its class. */
+
+:root {
+  --studio-radius-sm: 10px;
+  --studio-radius-md: 12px;
+  --studio-radius-lg: 18px;
+  --studio-radius-xl: 24px;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+}
+
+/* Headlines in legacy views: Sora, bold, tight, sentence case. */
+.view-panel :is(h1, h2):not(.disp),
+.settings-dialog :is(h1, h2),
+.project-dialog h2 {
+  font-family: var(--f-disp);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+.view-panel h1:not(.disp) { letter-spacing: var(--disp-track); }
+
+/* Primary action: the heat pill. */
+
+/* Secondary action: a clear glass pill. */
+
+/* Raised panels become content glass. */
+.elev-2 {
+  border: 0;
+  border-radius: var(--r-lg);
+  background-color: transparent;
+  background-image: var(--lg-fill-card);
+  box-shadow: var(--lg-bevel), var(--lg-drop);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
+  backdrop-filter: blur(28px) saturate(1.6);
+}
+.elev-2::before { display: none; }
+
+/* The workspace behind legacy views lets the footage glow through. */
+.viewport,
+#app-container > main { background: transparent; }

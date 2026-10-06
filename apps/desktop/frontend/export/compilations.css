@@ -1,0 +1,131 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Compilations, inside Export: glass draft cards on the shelf; on a draft, a
+   big title with the one next action, the moments beside the player. Scoped
+   to .comp2 so it outranks the old workspace styles it replaces. */
+
+.comp2 .compilation-workspace { height: auto; min-height: 0; display: block; overflow: visible; background: none; }
+.comp2 .compilation-shelf { display: grid; gap: 18px; padding: 0; }
+.comp2 .compilation-shelf-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin: 0; padding: 0; border: 0; }
+.comp2 .compilation-shelf-head .t3 { max-width: 70ch; margin: 0; font-size: 14px; }
+.comp2 .compilation-note { font-size: 13.5px; color: var(--t3); }
+.comp2 .compilation-message { padding: 12px 16px; border: 0; border-radius: 14px; background: var(--fill); font-size: 13.5px; color: var(--t2); }
+.comp2 .compilation-working-strip { display: flex; align-items: center; gap: 12px; margin: 0; padding: 14px 16px; border: 0; border-radius: var(--r-md); font-size: 13.5px; color: var(--t2); }
+.comp2 .compilation-working-strip strong { color: var(--t1); }
+
+.comp2 .compilation-shelf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 18px; }
+.comp2 .compilation-card.draft { display: grid; padding: 0; border: 0; border-radius: var(--r-lg); overflow: hidden; color: var(--t1); font: inherit; text-align: left; cursor: pointer; transition: transform var(--dur-2) var(--ease-out); }
+.comp2 .compilation-card.draft:hover { transform: translateY(-4px); }
+.comp2 .compilation-card.draft:active { transform: translateY(-1px) scale(.99); }
+.comp2 .compilation-card-thumb { position: relative; display: grid; place-items: center; aspect-ratio: 16 / 8; border: 0; border-radius: 0; background: #0e0e0e; box-shadow: none; color: var(--t4); overflow: hidden; }
+.comp2 .compilation-card-thumb video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.comp2 .compilation-card-thumb.is-empty { border: 0; background: repeating-linear-gradient(135deg, var(--fill) 0 8px, transparent 8px 16px); }
+.comp2 .compilation-card-thumb svg { width: 28px; height: 28px; }
+.comp2 .compilation-pill { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 10px; border: 0; border-radius: 12px; background: rgba(0, 0, 0, .55); color: #fff; font: 500 12px var(--f-ui); letter-spacing: 0; text-transform: none; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.comp2 .compilation-pill.is-ready { color: var(--keep); }
+.comp2 .compilation-pill.is-stale { color: var(--maybe); }
+.comp2 .compilation-card-thumb .compilation-pill { position: absolute; top: 12px; left: 12px; }
+.comp2 .compilation-card-len { position: absolute; right: 12px; bottom: 12px; padding: 2px 8px; border-radius: 8px; background: rgba(0, 0, 0, .7); color: #fff; font: 600 12px var(--f-ui); font-variant-numeric: tabular-nums; }
+.comp2 .compilation-card-meta { display: grid; gap: 4px; padding: 14px 16px 16px; }
+.comp2 .compilation-card-meta strong { font-size: 22px; line-height: 1.15; }
+.comp2 .compilation-card-meta small { font-size: 12.5px; color: var(--t3); }
+
+/* a draft */
+.comp2 .compilation-bench-top { margin-bottom: 4px; }
+.comp2 .compilation-bench-top .compilation-spacer { flex: 1; }
+.comp2 .btn.is-armed { background: color-mix(in oklab, var(--danger) 16%, transparent); color: var(--danger); }
+.comp2 .compilation-head { margin: 8px 0 20px; }
+.comp2 .compilation-docname {
+  width: 100%;
+  margin: 0 0 0 -10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--t1);
+  font: 700 clamp(36px, 3.6vw, 56px)/1.1 var(--f-disp);
+  letter-spacing: -.03em;
+  outline: none;
+  text-overflow: ellipsis;
+  transition: background-color var(--dur-1) ease;
+}
+.comp2 .compilation-docname:hover, .comp2 .compilation-docname:focus { background: var(--fill); }
+.comp2 .compilation-state { max-width: 72ch; margin: 8px 0 0; font-size: 14px; line-height: 1.5; }
+.comp2 .compilation-state b { color: var(--t1); font-weight: 600; }
+
+.comp2 .compilation-readiness { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 12px 16px; margin: 0 0 18px; padding: 16px 18px; border: 0; border-radius: var(--r-md); background: var(--glass); box-shadow: inset 0 0 0 1px var(--stroke); }
+.comp2 .compilation-readiness.is-blocked { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--danger) 40%, transparent); }
+.comp2 .compilation-readiness-mark { color: var(--t2); }
+.comp2 .compilation-readiness-copy { display: grid; gap: 2px; }
+.comp2 .compilation-readiness-copy strong { font-size: 14px; font-weight: 600; color: var(--t1); }
+.comp2 .compilation-readiness-copy span { font-size: 13px; line-height: 1.45; color: var(--t2); }
+.comp2 .compilation-readiness-space { display: grid; justify-items: end; gap: 2px; font-size: 12px; color: var(--t3); }
+.comp2 .compilation-readiness-space strong { font: 700 18px var(--f-disp); color: var(--t1); }
+.comp2 .compilation-readiness-progress { display: flex; align-items: center; gap: 10px; min-width: 180px; }
+.comp2 .compilation-readiness-progress > span { flex: 1; height: 6px; border-radius: 3px; background: var(--fill-2); overflow: hidden; }
+.comp2 .compilation-readiness-progress i { display: block; height: 100%; background: var(--heat); transform-origin: left center; }
+.comp2 .compilation-readiness-actions { display: flex; gap: 8px; }
+.comp2 .compilation-readiness-actions button { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 13px; border: 0; border-radius: var(--r-pill); background: var(--lg-button); box-shadow: var(--lg-button-bevel); color: var(--t1); font: 500 12.5px var(--f-ui); cursor: pointer; }
+.comp2 .compilation-readiness-actions button.is-primary { background: var(--lg-heat-sheen), var(--heat); color: var(--heat-ink); font-weight: 700; }
+.comp2 .compilation-readiness-actions button:disabled { opacity: .4; pointer-events: none; }
+.comp2 .compilation-readiness-note { grid-column: 2 / -1; margin: 0; font-size: 12.5px; color: var(--t3); }
+
+.comp2 .compilation-bench { display: grid; grid-template-columns: minmax(0, 1fr) clamp(240px, 24%, 320px); gap: 20px; align-items: start; padding: 0; }
+.comp2 .compilation-bench.is-list-only { grid-template-columns: minmax(0, 1fr); }
+.comp2 .compilation-stage { order: 2; width: auto; position: sticky; top: 16px; display: grid; gap: 12px; }
+.comp2 .compilation-screen { aspect-ratio: 9 / 16; border: 0; border-radius: 24px; background: #0b0b0b; box-shadow: 0 0 0 1px var(--stroke-2), 0 30px 80px rgba(0, 0, 0, .5); }
+.comp2 .compilation-working { color: var(--t2); }
+.comp2 .compilation-working strong { color: var(--t1); }
+.comp2 .compilation-working button { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 13px; border: 0; border-radius: var(--r-pill); background: var(--lg-button); box-shadow: var(--lg-button-bevel); color: var(--t1); font: 500 12.5px var(--f-ui); cursor: pointer; }
+.comp2 .compilation-ribbon { display: flex; gap: 3px; height: 30px; border-radius: 10px; overflow: hidden; }
+.comp2 .compilation-ribbon button { padding: 0; border: 0; background: var(--lg-heat-sheen), var(--heat); cursor: pointer; opacity: .9; }
+.comp2 .compilation-ribbon button:nth-child(even) { opacity: .7; }
+.comp2 .compilation-ribbon button.is-selected { opacity: 1; box-shadow: inset 0 0 0 2px var(--t1); }
+.comp2 .compilation-ribbon button.is-win { background: var(--keep); }
+.comp2 .compilation-ribbon-legend { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px; font-size: 11.5px; color: var(--t3); }
+.comp2 .compilation-ribbon-keys { display: flex; gap: 10px; }
+.comp2 .compilation-ribbon-keys em { display: inline-flex; align-items: center; gap: 5px; font-style: normal; }
+.comp2 .compilation-ribbon-keys i { width: 10px; height: 6px; border-radius: 3px; background: var(--heat); }
+.comp2 .compilation-ribbon-keys i.is-win { background: var(--keep); }
+.comp2 .compilation-stagefacts { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 14px 16px; border-radius: 16px; background: var(--glass); box-shadow: inset 0 0 0 1px var(--stroke); font-size: 13px; color: var(--t3); }
+.comp2 .compilation-stagefacts strong { color: var(--t1); font-weight: 600; }
+
+.comp2 .compilation-board { display: grid; gap: 14px; padding: 20px 22px; border: 0; border-radius: var(--r-lg); min-width: 0; }
+.comp2 .compilation-board-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.comp2 .compilation-board-head h2 { font-size: 22px; }
+.comp2 .compilation-count { height: 26px; padding: 0 10px; display: inline-grid; place-items: center; border-radius: 13px; background: var(--fill-2); font: 500 12px var(--f-ui); color: var(--t2); }
+.comp2 .compilation-seg button { height: 32px; gap: 6px; }
+.comp2 .compilation-seg button.is-on { background: var(--lg-selected); box-shadow: var(--lg-selected-bevel); color: var(--t1); }
+.comp2 .compilation-seg svg { width: 14px; height: 14px; }
+.comp2 .compilation-stale { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 0; border-radius: 14px; background: color-mix(in oklab, var(--maybe) 12%, transparent); font-size: 13px; color: var(--t2); }
+.comp2 .compilation-stale > svg { color: var(--maybe); }
+.comp2 .compilation-stale button { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: var(--lg-heat-sheen), var(--heat); color: var(--heat-ink); font: 700 12.5px var(--f-ui); cursor: pointer; }
+.comp2 .compilation-board-empty { display: grid; justify-items: center; gap: 8px; padding: 30px 10px; text-align: center; color: var(--t3); }
+.comp2 .compilation-board-empty strong { font-size: 15px; color: var(--t1); }
+.comp2 .compilation-board-empty p { max-width: 52ch; margin: 0; font-size: 13.5px; }
+.comp2 .compilation-tiles { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 12px; padding: 2px; overflow: visible; }
+.comp2 .compilation-tile { border-radius: 14px; background: #111; box-shadow: 0 0 0 1px var(--stroke); }
+.comp2 .compilation-tile::after { border-radius: 14px; }
+.comp2 .compilation-tile.is-selected { box-shadow: 0 0 0 2.5px var(--t1); }
+.comp2 .compilation-tile-ord { font: 800 15px var(--f-disp); }
+.comp2 .compilation-tile-len { font: 600 11px var(--f-ui); font-variant-numeric: tabular-nums; }
+.comp2 .compilation-inspector { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px; border: 0; border-radius: 16px; background: var(--fill); }
+.comp2 .compilation-inspector-poster { position: relative; aspect-ratio: 9 / 16; border-radius: 8px; overflow: hidden; background: #111; display: grid; place-items: center; }
+.comp2 .compilation-inspector-poster img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.comp2 .compilation-inspector-copy { display: grid; gap: 4px; min-width: 0; }
+.comp2 .compilation-inspector-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.comp2 .compilation-inspector-row strong { font-size: 14.5px; font-weight: 600; color: var(--t1); }
+.comp2 .compilation-inspector-where { font-size: 12.5px; color: var(--t3); }
+.comp2 .compilation-inspector-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* the New compilation sheet, on the shared dialog */
+.compilation-sheet.project-dialog { width: min(620px, calc(100vw - 48px)); max-height: calc(100vh - 80px); overflow-y: auto; }
+.compilation-sheet .compilation-field-label { font: 600 12.5px var(--f-ui); letter-spacing: 0; text-transform: none; color: var(--t3); }
+.compilation-sheet :is(.compilation-source, .compilation-match, .compilation-recipe, .compilation-length) { border: 0; border-radius: var(--r-md); background: var(--fill); box-shadow: inset 0 0 0 1px var(--stroke); color: var(--t1); }
+.compilation-sheet :is(.compilation-source, .compilation-match, .compilation-recipe, .compilation-length).is-on { background: var(--heat-soft); box-shadow: inset 0 0 0 1.5px var(--heat-line); }
+.compilation-sheet select { height: 44px; padding: 0 14px; border: 0; border-radius: 14px; background: var(--fill); box-shadow: inset 0 0 0 1px var(--stroke); color: var(--t1); font: 400 14px var(--f-ui); }
+
+@media (max-width: 1100px) {
+  .comp2 .compilation-bench { grid-template-columns: minmax(0, 1fr); }
+  .comp2 .compilation-stage { order: 0; position: static; max-width: 320px; }
+  .comp2 .compilation-readiness { grid-template-columns: auto minmax(0, 1fr); }
+}

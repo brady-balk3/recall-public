@@ -1,0 +1,110 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Liquid glass and the footage glow.
+
+   Glass is reserved for layers:
+   - .glass        content cards on a page: calmer, thicker glass so text stays crisp
+   - .glass-float  floating chrome (sidebar, toasts, theater bars): clear middle,
+                   light bends at the rim through the #lg-lens displacement filter
+   - .glass-read   anything you read or type in (Ctrl K, dialogs, menus): thick, dark
+   All three pick up a cursor-tracked highlight from --mx / --my (theme/ambient.tsx).
+
+   The background is black, lit from the top by a blurred wash of whatever is on
+   screen (#ambient), plus fine grain. Full-window views (.glow-opaque) are opaque
+   and carry their own copy of the glow. */
+
+.glass,
+.glass-float,
+.glass-read {
+  --lg-surface: var(--lg-fill-card);
+  background-image:
+    radial-gradient(360px circle at var(--mx, -400px) var(--my, -400px), var(--lg-highlight), transparent 45%),
+    var(--lg-surface);
+  box-shadow: var(--lg-bevel), var(--lg-drop);
+}
+
+.glass {
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
+  backdrop-filter: blur(28px) saturate(1.6);
+}
+
+.glass-float {
+  --lg-surface: var(--lg-fill);
+  -webkit-backdrop-filter: blur(16px) saturate(1.9) brightness(1.05);
+  backdrop-filter: blur(16px) saturate(1.9) brightness(1.05);
+  backdrop-filter: url(#lg-lens) blur(6px) saturate(2) brightness(1.08);
+  box-shadow: var(--lg-bevel-float), var(--lg-drop-float);
+}
+
+.glass-read {
+  --lg-surface: var(--lg-fill-read);
+  -webkit-backdrop-filter: blur(16px) saturate(1.9) brightness(1.05);
+  backdrop-filter: blur(16px) saturate(1.9) brightness(1.05);
+  backdrop-filter: url(#lg-lens) blur(6px) saturate(2) brightness(1.08);
+  box-shadow: var(--lg-bevel-float), var(--lg-drop-float);
+}
+
+.glass-scrim {
+  background: var(--scrim);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+/* ── footage glow ── */
+#ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+#ambient .amb-layer {
+  position: absolute;
+  left: -10%;
+  right: -10%;
+  top: -30%;
+  height: 95%;
+  background-size: cover;
+  background-position: center 35%;
+  filter: var(--amb-filter);
+  opacity: 0;
+  transition: opacity 1.2s ease;
+  -webkit-mask-image: radial-gradient(120% 85% at 50% 0%, #000 0%, rgba(0,0,0,.55) 38%, transparent 72%);
+  mask-image: radial-gradient(120% 85% at 50% 0%, #000 0%, rgba(0,0,0,.55) 38%, transparent 72%);
+}
+#ambient .amb-layer.is-front { opacity: var(--amb-opacity); }
+.amb-grain,
+#ambient .amb-grain {
+  position: absolute;
+  inset: 0;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+:root[data-theme="light"] .amb-grain { mix-blend-mode: multiply; }
+
+/* full-window views: opaque, with their own glow behind them */
+.glow-opaque {
+  position: relative;
+  background: var(--bg);
+  isolation: isolate;
+}
+.glow-opaque::before {
+  content: "";
+  position: absolute;
+  left: -10%;
+  right: -10%;
+  top: -30%;
+  height: 90%;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--amb-url, none) center 35% / cover no-repeat;
+  filter: var(--amb-filter);
+  opacity: calc(var(--amb-opacity) * .95);
+  -webkit-mask-image: radial-gradient(120% 85% at 50% 0%, #000 0%, rgba(0,0,0,.55) 38%, transparent 72%);
+  mask-image: radial-gradient(120% 85% at 50% 0%, #000 0%, rgba(0,0,0,.55) 38%, transparent 72%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #ambient .amb-layer { transition-duration: 300ms; }
+}

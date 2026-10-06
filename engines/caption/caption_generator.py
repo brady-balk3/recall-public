@@ -24,7 +24,7 @@ def _transcript_has_words(transcript: dict, start: float, end: float) -> bool:
                 return True
     return False
 
-def process_clips_to_captions(clips: List[GameClip], stories: List[GameStory], video_path: str = None, temp_dir: str = None, transcript: dict = None, cancel_check=None, caption_style=None, game: str = "generic") -> List[ClipCaption]:
+def process_clips_to_captions(clips: List[GameClip], stories: List[GameStory], video_path: str = None, temp_dir: str = None, transcript: dict = None, cancel_check=None, caption_style=None, game: str = "generic", on_caption=None) -> List[ClipCaption]:
     """
     Main entry point for the Caption Engine.
     Converts a stream of GameClips into ClipCaptions using deterministic rules,
@@ -33,6 +33,9 @@ def process_clips_to_captions(clips: List[GameClip], stories: List[GameStory], v
     ``caption_style`` (plan 9.4) controls the burned-in subtitle look (font,
     size, colors, position). A disabled style skips subtitle rendering entirely
     so exports come out clean.
+
+    ``on_caption``, when given, is called with each ClipCaption as soon as it
+    is written. Display-only: a failing hook never costs a caption.
     """
     if not clips:
         return []
@@ -141,5 +144,10 @@ def process_clips_to_captions(clips: List[GameClip], stories: List[GameStory], v
                         print(f"VOD-transcript caption fallback also failed for {clip.clip_id}: {retry_exc}")
 
         captions.append(caption)
+        if on_caption:
+            try:
+                on_caption(caption)
+            except Exception as exc:  # noqa: BLE001 - display hook only
+                print(f"Caption hook failed for {clip.clip_id}: {exc}")
 
     return captions

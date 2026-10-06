@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Brady Balk
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, Keyboard, X } from "lucide-react";
+import { AlertTriangle, Check, Keyboard, X } from "../lib/icons";
 import type { RememberHotkeyState } from "../electron";
 
 const MODIFIER_KEYS = new Set(["Control", "Alt", "Shift", "Meta", "OS", "AltGraph"]);
@@ -106,10 +106,10 @@ export default function RememberHotkeySetting() {
           <kbd className={broken ? "is-broken" : undefined}>{displayHotkey(state.accelerator)}</kbd>
         )}
         {!state.accelerator && !listening && (
-          <span className="hotkey-off">Off — use the Remember button</span>
+          <span className="hotkey-off">Off. Use the Remember button</span>
         )}
         <button
-          type="button" className="btn-secondary" ref={listenButton}
+          type="button" className="btn sm" ref={listenButton}
           disabled={locked}
           aria-pressed={listening}
           onClick={() => { setPendingError(null); setListening((value) => !value); }}
@@ -118,7 +118,7 @@ export default function RememberHotkeySetting() {
           {listening ? "Cancel" : state.accelerator ? "Change" : "Set a shortcut"}
         </button>
         {state.accelerator && !listening && !locked && (
-          <button type="button" className="btn-secondary" onClick={() => void commit(null)}>
+          <button type="button" className="btn sm ghost" onClick={() => void commit(null)}>
             Turn off
           </button>
         )}

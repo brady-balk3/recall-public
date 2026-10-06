@@ -650,6 +650,153 @@ def _cache_load(path):
     return signal_cache.load(path)
 
 
+LANE_BINS = 240
+
+
+def _field(item, name, default=None):
+    """Read ``name`` off a dataclass frame or a cached dict alike."""
+    if isinstance(item, dict):
+        return item.get(name, default)
+    return getattr(item, name, default)
+
+
+def _scan_lanes(duration, transcript=None, chat_frames=None, chat_scope="full_vod"):
+    """Speech and chat activity across the VOD for the live scan strip.
+
+    Both lanes are bucketed onto ``LANE_BINS`` equal slices of the VOD and
+    normalized to 0..1: speech by words per slice (95th percentile, so one
+    rant doesn't flatten the rest), chat by messages per slice against the
+    busiest one. A lane with no data is None. ``speech_regions`` carries the
+    stretches a region-scoped transcript actually heard, so silence outside
+    them reads as "not listened to", not "nobody spoke".
+    """
+    duration = float(duration or 0.0)
+    if duration <= 0:
+        return None
+    width = duration / LANE_BINS
+
+    speech = None
+    segments = (transcript or {}).get("segments") or []
+    if segments:
+        words = [0.0] * LANE_BINS
+        for seg in segments:
+            seg_words = _field(seg, "words") or []
+            if seg_words:
+                for word in seg_words:
+                    t = _field(word, "start")
+                    if t is None:
+                        continue
+                    idx = min(LANE_BINS - 1, max(0, int(float(t) / width)))
+                    words[idx] += 1.0
+            else:
+                start = float(_field(seg, "start", 0.0) or 0.0)
+                idx = min(LANE_BINS - 1, max(0, int(start / width)))
+                words[idx] += len(str(_field(seg, "text", "") or "").split())
+        speech = _normalize_speech(words)
+
+    chat = None
+    if chat_frames:
+        counts = [0.0] * LANE_BINS
+        for frame in chat_frames:
+            t = _field(frame, "timestamp")
+            if t is None:
+                continue
+            idx = min(LANE_BINS - 1, max(0, int(float(t) / width)))
+            counts[idx] += float(_field(frame, "messages", 0) or 0)
+        peak = max(counts)
+        if peak > 0:
+            chat = [round(value / peak, 3) for value in counts]
+
+    if speech is None and chat is None:
+        return None
+    regions = (transcript or {}).get("covered_regions")
+    return {
+        "version": 1,
+        "duration": round(duration, 1),
+        "speech": speech,
+        "chat": chat,
+        "chat_scope": chat_scope,
+        "speech_regions": [[round(float(a), 1), round(float(b), 1)] for a, b in regions] if regions else None,
+    }
+
+
+def _normalize_speech(words):
+    """Words per slice to 0..1 against the 95th percentile; None when silent."""
+    ranked = sorted(words)
+    ceiling = ranked[int(0.95 * (len(ranked) - 1))] or max(words)
+    if ceiling <= 0:
+        return None
+    return [round(min(1.0, value / ceiling), 3) for value in words]
+
+
+class _SpeechLaneStream:
+    """Feeds the speech lane while ASR runs: counts each chunk's words into
+    the lane's slices and sends the lane at most every ``interval`` seconds.
+    ``speech_until`` says how far the pass has heard, so the view can tell
+    "not transcribed yet" from "nobody spoke"."""
+
+    def __init__(self, event_callback, duration, interval=8.0):
+        self.event_callback = event_callback
+        self.duration = float(duration or 0.0)
+        self.interval = interval
+        self.words = [0.0] * LANE_BINS
+        self.until = 0.0
+        self.last_sent = 0.0
+
+    def __call__(self, words):
+        if not self.event_callback or self.duration <= 0:
+            return
+        width = self.duration / LANE_BINS
+        for word in words:
+            t = _field(word, "start")
+            if t is None:
+                continue
+            idx = min(LANE_BINS - 1, max(0, int(float(t) / width)))
+            self.words[idx] += 1.0
+            self.until = max(self.until, float(_field(word, "end", t) or t))
+        now = time.monotonic()
+        if now - self.last_sent < self.interval:
+            return
+        self.last_sent = now
+        speech = _normalize_speech(self.words)
+        if speech:
+            self.event_callback("scan_lanes", "Reaction", "", {
+                "version": 1,
+                "duration": round(self.duration, 1),
+                "speech": speech,
+                "chat": None,
+                "chat_scope": "full_vod",
+                "speech_regions": None,
+                "speech_until": round(self.until, 1),
+            })
+
+
+def _caption_announcer(event_callback):
+    """Tell the live view each clip's caption is written, with its real title,
+    so a found card can move from "Found" to "Captioned". None without a sink."""
+    if not event_callback:
+        return None
+
+    def announce(caption):
+        event_callback("clip_captioned", "Caption", "", {
+            "clip_id": caption.clip_id,
+            "title": caption.title,
+        })
+    return announce
+
+
+def _emit_scan_lanes(event_callback, duration, transcript=None, chat_frames=None, chat_scope="full_vod"):
+    """Send the lanes to the live scan view. A UI nicety: never raises."""
+    if not event_callback:
+        return
+    try:
+        lanes = _scan_lanes(duration, transcript, chat_frames, chat_scope)
+        if lanes:
+            event_callback("scan_lanes", "Reaction", "", lanes)
+    except Exception as exc:  # noqa: BLE001 - lanes are display-only
+        print(f"Scan lanes skipped: {exc}")
+
+
 def _reaction_timeline(curve, max_points: int = 2400, game_segments=None):
     """Compact, JSON-able R(t) summary for the UI's VOD-level reaction timeline.
 
@@ -776,7 +923,8 @@ def _report_visual_judge_health(
 
 def _reaction_select(video_path, unified_signals, duration, settings,
                      pipeline_settings, storage, video_hash, emit, audio_signals=None,
-                     cancel_check=None, framing_callback=None, event_callback=None):
+                     cancel_check=None, framing_callback=None, event_callback=None,
+                     timeline_callback=None):
     """Reaction Highlight Engine selection path.
 
     Returns (stories, clips, transcript, timeline) where timeline is the
@@ -975,6 +1123,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                     cancel_check=cancel_check,
                     progress_callback=_asr_progress_reporter(emit, 0.60, 0.64),
                     settings=settings,
+                    words_callback=_SpeechLaneStream(event_callback, duration) if event_callback else None,
                 )
                 signal_cache.save(tr_cache, transcript)
                 # Hand the card back before the VLM judge runs. ASR is done for
@@ -1005,6 +1154,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             raise
         except Exception as exc:  # noqa: BLE001 - ASR is optional; never block selection
             print(f"ASR hype skipped: {exc}")
+        _emit_scan_lanes(event_callback, duration, transcript)
 
     # Twitch chat velocity (plan 9.1). Optional crowd-reaction channel — only
     # for Twitch VODs, only when TwitchDownloaderCLI is resolvable, and cached
@@ -1086,6 +1236,17 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             asr_hype_frames=None, audio_event_frames=audio_event_frames,
             settings=first_pass_settings, ranker=None,
         )
+        # Show the creator the first-pass curve now rather than after the
+        # judges: it is the same R(t) minus facecam and ASR hype, and the final
+        # timeline replaces it once selection finishes.
+        if timeline_callback:
+            try:
+                early_timeline = _reaction_timeline(first_pass_curve, game_segments=game_segments)
+                if early_timeline:
+                    early_timeline["preliminary"] = True
+                    timeline_callback(early_timeline)
+            except Exception as exc:  # noqa: BLE001 - a preview curve is optional
+                print(f"Early reaction timeline skipped: {exc}")
         max_refine_seconds = min(
             pipeline_settings["max_refine_seconds"],
             max(60.0, duration * pipeline_settings["max_refine_fraction"]),
@@ -1276,6 +1437,11 @@ def _reaction_select(video_path, unified_signals, duration, settings,
         else:
             emit("Reaction", "Smart scan found no candidate regions.", 0.62)
 
+    _emit_scan_lanes(
+        event_callback, duration, transcript, chat_frames,
+        chat_scope="smart_regions" if fast_mode else "full_vod",
+    )
+
     # Anonymous chat phrases and counts are durable Memory evidence, while the
     # source messages remain ephemeral. Persist before selection so a later
     # optional judge/export failure cannot erase evidence the scan already read.
@@ -1419,6 +1585,19 @@ def _reaction_select(video_path, unified_signals, duration, settings,
 
             def visual_judge(judge_candidates_list):
                 emit("Reaction", "Local vision model is reviewing likely moments...", 0.645)
+                if event_callback:
+                    try:
+                        windows = [
+                            [round(a, 1), round(b, 1)]
+                            for a, b in (visual_judge_mod.judge_window(c) for c in judge_candidates_list)
+                        ]
+                        event_callback(
+                            "candidates_ready", "Reaction",
+                            f"{len(windows)} likely moments queued for the vision check.",
+                            {"windows": windows},
+                        )
+                    except Exception as exc:  # noqa: BLE001 - display-only
+                        print(f"Candidate list event skipped: {exc}")
                 started = time.monotonic()
                 try:
                     return visual_session(judge_candidates_list)
@@ -1435,6 +1614,14 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             # function otherwise silently judges 0 winners (2026-07-22).
             visual_judge.ensure_capacity = visual_session.ensure_capacity
             visual_judge.session = visual_session
+
+            if event_callback:
+                def candidate_status(start, end, status):
+                    event_callback(
+                        "candidate_verdict", "Reaction", "",
+                        {"start": round(start, 1), "end": round(end, 1), "status": status},
+                    )
+                visual_session.on_candidate = candidate_status
 
             # The outcome sweep (win banners OCR can't read) shares the
             # session's backend and frame extractor — one model resident.
@@ -1792,7 +1979,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             facecam_subject_top=facecam_mod.subject_top_for_box(
                 facecam_layouts, facecam_box),
         )
-        if requested_export_layout == "auto" and resolved.get("facecam"):
+        if requested_export_layout == "auto":
             overlay = vtuber_mod.overlay_for_facecam(vtuber_model, facecam_box)
             if overlay is not None:
                 resolved = vtuber_mod.apply_overlay(resolved, overlay)
@@ -2084,6 +2271,7 @@ def run_pipeline(video_path: str, settings: dict = None, progress_callback=None,
             cancel_check=_check_cancel,
             framing_callback=framing_callback,
             event_callback=event_callback,
+            timeline_callback=timeline_callback,
         )
         primary_clips = [
             clip for clip in clips
@@ -2134,6 +2322,7 @@ def run_pipeline(video_path: str, settings: dict = None, progress_callback=None,
             cancel_check=_check_cancel, caption_style=settings.get("captionStyle"),
             # Detected game id -> lead hashtag on every clip's post metadata.
             game=pipeline_settings.get("game", "generic"),
+            on_caption=_caption_announcer(event_callback),
         )
         _mark("Caption generation", caption_started)
         

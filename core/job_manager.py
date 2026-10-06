@@ -119,6 +119,16 @@ PERSISTED_PROGRESS_TRIM_INTERVAL = 100
 LIVE_STAGE_ETA_MAX_AGE_SECONDS = 30.0
 
 
+# Events the live scan view consumes as they stream; kept out of the replayed
+# recent_events window so the scan log stays readable.
+LIVE_ONLY_EVENTS = ("candidate_verdict",)
+# What the live strip needs to redraw after a reload: the newest curve and
+# lanes, and every candidate event in order (a verdict only means something
+# after its candidates_ready).
+LATEST_STATE_EVENTS = ("timeline_ready", "scan_lanes")
+CANDIDATE_EVENTS = ("candidates_ready", "candidate_verdict", "clip_captioned")
+
+
 class JobManager:
     def __init__(self, db: DatabaseManager):
         self.db = db
@@ -331,8 +341,16 @@ class JobManager:
             (job_id, job_id, PERSISTED_PROGRESS_EVENTS_PER_JOB),
         )
 
+    def _scan_state_events(self, job_id: str) -> list:
+        """The live strip's state, oldest first, for a view opened mid-scan."""
+        latest = []
+        for kind in LATEST_STATE_EVENTS:
+            latest.extend(self.get_job_events(job_id, limit=1, event_types=(kind,)))
+        candidates = self.get_job_events(job_id, limit=800, event_types=CANDIDATE_EVENTS)
+        return latest + list(reversed(candidates))
+
     def get_job_events(self, job_id: str, limit: int = 60,
-                       event_types=None) -> list:
+                       event_types=None, exclude_types=None) -> list:
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
             params = [job_id]
@@ -342,6 +360,11 @@ class JobManager:
                 placeholders = ",".join("?" for _ in event_types)
                 type_filter = f" AND event_type IN ({placeholders})"
                 params.extend(event_types)
+            if exclude_types:
+                exclude_types = tuple(exclude_types)
+                placeholders = ",".join("?" for _ in exclude_types)
+                type_filter += f" AND event_type NOT IN ({placeholders})"
+                params.extend(exclude_types)
             params.append(limit)
             cursor.execute(
                 "SELECT job_id, event_type, phase, message, progress, payload, created_at "
@@ -465,7 +488,12 @@ class JobManager:
         job["scan_health"] = self._scan_health(job_id, tel)
 
         if include_events:
-            job["recent_events"] = self.get_job_events(job_id, limit=40)
+            # Per-candidate vision verdicts arrive by the dozen; they are for the
+            # live strip and would push the scan's real story out of this window.
+            job["recent_events"] = self.get_job_events(
+                job_id, limit=40, exclude_types=LIVE_ONLY_EVENTS,
+            )
+            job["scan_state_events"] = self._scan_state_events(job_id)
         return job
 
     def _scan_health(self, job_id: str, tel: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -592,6 +620,59 @@ class JobManager:
             now, rates, bool(tel.get("eta_history_matched"))
         )
         return rates
+
+    def scan_rates(self, mode: str = "quality", facecam_tracking: bool = True) -> Dict[str, Any]:
+        """This machine's measured scan cost, for estimating a scan before it
+        starts: wall seconds per second of VOD, from the median of each stage
+        across recent completed scans. The Twitch download is kept apart
+        because a local file skips it. Scans of the same mode are preferred;
+        with none, any recent scan stands in (``matched`` says which)."""
+        rows = []
+        try:
+            with self.db.get_connection() as conn:
+                rows = conn.cursor().execute(
+                    '''SELECT stage_timings, duration, scan_profile, source_type FROM jobs
+                       WHERE status = 'completed' AND stage_timings IS NOT NULL
+                         AND duration > 0
+                       ORDER BY created_at DESC LIMIT 12'''
+                ).fetchall()
+        except Exception:
+            traceback.print_exc()
+        jobs = []
+        for row in rows:
+            try:
+                timings = json.loads(row["stage_timings"]) or {}
+                vod = float(row["duration"])
+                profile = json.loads(row["scan_profile"]) if row["scan_profile"] else {}
+            except (ValueError, TypeError):
+                continue
+            key = (str(profile.get("mode") or "unknown"), bool(profile.get("facecam_tracking", True)))
+            rates = {
+                phase: float((t or {}).get("duration_seconds") or 0.0) / vod
+                for phase, t in timings.items()
+            }
+            jobs.append((key, row["source_type"], rates))
+        matched = [job for job in jobs if job[0] == (str(mode), bool(facecam_tracking))]
+        selected = matched or jobs
+        if not selected:
+            return {"per_vod_second": None, "download_per_vod_second": None, "samples": 0, "matched": False}
+
+        def median(values):
+            values = sorted(values)
+            return values[len(values) // 2] if values else 0.0
+
+        phases = {phase for _, _, rates in selected for phase in rates if phase != "Resolving Input"}
+        scan = sum(median([rates.get(phase, 0.0) for _, _, rates in selected]) for phase in phases)
+        # A zero download means the source was already on disk; it says nothing
+        # about how long a fresh download takes.
+        downloads = [rates.get("Resolving Input", 0.0) for _, source, rates in jobs if source == "twitch"]
+        downloads = [value for value in downloads if value > 0]
+        return {
+            "per_vod_second": round(scan, 5),
+            "download_per_vod_second": round(median(downloads), 5) if downloads else None,
+            "samples": len(selected),
+            "matched": bool(matched),
+        }
 
     def _model_eta(self, tel: dict, phase: Optional[str]):
         """Per-stage ETA: measured progress inside the current stage, plus this
@@ -1396,8 +1477,11 @@ class JobManager:
                 )
                 if trace:
                     self._write_candidates(job_id, trace, diagnostics)
-                self.db.set_reaction_timeline(job_id, timeline)
-                self._telemetry.setdefault(job_id, {})["timeline_emitted"] = True
+                # A preliminary curve is a live preview only: it is never
+                # persisted and never counts as the job's timeline.
+                if not (isinstance(timeline, dict) and timeline.get("preliminary")):
+                    self.db.set_reaction_timeline(job_id, timeline)
+                    self._telemetry.setdefault(job_id, {})["timeline_emitted"] = True
                 self.emit_event(
                     job_id, "timeline_ready", phase="Clip",
                     payload={"timeline": timeline},

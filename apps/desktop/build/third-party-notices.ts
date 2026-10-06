@@ -4,6 +4,21 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Plugin } from "vite";
 
+/**
+ * Packages whose npm tarball omits its license file, mapped to the license
+ * text of the source they were built from (relative to apps/desktop, where
+ * the build runs). Keep this short and exact; every other package must carry
+ * its own notice.
+ */
+const NOTICE_FALLBACKS: Record<string, string> = {
+  // Built from the OpenCut repository (MIT), vendored in frontend/opencut.
+  "opencut-wasm": "frontend/opencut/LICENSE",
+  // MIT per its package.json; the vendor's MIT text ships in its sibling package.
+  "@hugeicons/core-free-icons": "node_modules/@hugeicons/react/LICENSE.md",
+  // MIT per its package.json; same author's MIT text ships in react-remove-scroll.
+  "react-remove-scroll-bar": "node_modules/react-remove-scroll/LICENSE",
+};
+
 /** Preserve notices for packages whose code actually survives bundling. */
 export function thirdPartyNotices(fileName = "THIRD-PARTY-NOTICES.txt"): Plugin {
   return {
@@ -25,9 +40,11 @@ export function thirdPartyNotices(fileName = "THIRD-PARTY-NOTICES.txt"): Plugin 
                 const notices = fs.readdirSync(directory).filter(name =>
                   /^(licen[cs]e|copying|notice|copyright)([.-].*)?$/i.test(name)
                   && fs.statSync(path.join(directory, name)).isFile()).sort();
-                if (!notices.length) this.error(`Missing bundled dependency notice: ${metadata.name}@${metadata.version}`);
-                packages.set(directory, `${metadata.name}@${metadata.version}\n` + notices.map(name =>
-                  `\n--- ${name} ---\n${fs.readFileSync(path.join(directory, name), "utf8")}`).join("\n"));
+                const fallback = NOTICE_FALLBACKS[metadata.name];
+                if (!notices.length && !fallback) this.error(`Missing bundled dependency notice: ${metadata.name}@${metadata.version}`);
+                packages.set(directory, `${metadata.name}@${metadata.version}\n` + (notices.length
+                  ? notices.map(name => `\n--- ${name} ---\n${fs.readFileSync(path.join(directory, name), "utf8")}`).join("\n")
+                  : `\n--- ${fallback} ---\n${fs.readFileSync(path.resolve(process.cwd(), fallback), "utf8")}`));
                 found = true;
                 break;
               }

@@ -406,20 +406,20 @@ def overlay_for_facecam(
     if (
         not isinstance(vtuber_model, dict)
         or vtuber_model.get("status") != "confirmed"
-        or not facecam_box
     ):
         return None
     matches = [
         (iou(list(facecam_box), list(item.get("plate") or [])), item)
         for item in (vtuber_model.get("overlays") or [])
-        if len(item.get("plate") or []) >= 4
+        if facecam_box and len(item.get("plate") or []) >= 4
     ]
     score, overlay = max(matches, default=(0.0, None), key=lambda pair: pair[0])
     if overlay is not None and score >= MATCH_IOU:
         return overlay
     overlays = list(vtuber_model.get("overlays") or [])
     # Once the creator has confirmed a single avatar track, an unrelated
-    # camera-shaped widget (for example a stream pet) must not veto it.
+    # camera-shaped widget (for example a stream pet), or a missing ordinary
+    # facecam detection, must not veto it.
     return overlays[0] if len(overlays) == 1 else None
 
 

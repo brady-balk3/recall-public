@@ -1,0 +1,156 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+   Recall's frame around the vendored OpenCut editor: a full-window surface
+   under the window controls, with a Theater-style glass bar on top. */
+.oce {
+  position: fixed;
+  inset: 0;
+  z-index: 25; /* under .shell-win (30) so the window controls stay usable */
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--t1);
+}
+
+/* Inside a Recall view (the Cutting Room): fill the panel, keep the sidebar. */
+.oce.is-inline {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  background: transparent;
+}
+
+.oce-top {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 52px;
+  margin: 10px 150px 8px 12px; /* right: clear of the window controls */
+  padding: 0 8px 0 6px;
+  border-radius: 26px;
+  background: var(--lg-fill-read);
+  box-shadow: var(--lg-bevel), var(--lg-drop);
+  -webkit-app-region: drag;
+}
+.oce-top button { -webkit-app-region: no-drag; }
+/* In the Cutting Room the bar sits inside Recall's page, below the window
+   controls: no gap for them, and no window dragging from it. */
+.oce.is-inline .oce-top { margin: 10px 12px 8px; -webkit-app-region: no-drag; }
+.oce .oce-btn:disabled:not([aria-busy="true"]) { opacity: .45; }
+.oce .oce-btn.is-quiet { background: transparent; box-shadow: none; color: var(--t2); }
+.oce .oce-btn.is-quiet:hover { background: var(--fill); color: var(--t1); }
+
+/* Button rules are prefixed with .oce on purpose: OpenCut's scoped reset
+   (.oc-root button: radius 0, transparent) is more specific than a lone
+   class, and without the prefix every top-bar button renders square. */
+.oce .oce-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 14px 0 10px;
+  border-radius: 19px;
+  color: var(--t2);
+  font: 600 13px/1 var(--f-ui);
+  transition: background-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+.oce .oce-back:hover { background: var(--fill); color: var(--t1); }
+.oce .oce-back svg { width: 16px; height: 16px; }
+
+.oce-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.oce-title b {
+  font: var(--disp-w) 15px/1.2 var(--f-disp);
+  letter-spacing: var(--disp-track);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.oce-title span {
+  color: var(--t3);
+  font: 400 12px/1.2 var(--f-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oce-actions { display: flex; align-items: center; gap: 8px; }
+.oce-error { color: var(--danger); font: 500 12px/1.2 var(--f-ui); max-width: 280px; }
+.oce-shuttle {
+  position: absolute;
+  top: 74px;
+  right: 24px;
+  z-index: 30;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font: 600 13px/1.2 var(--f-ui);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.oce-done { color: var(--keep); font: 500 12px/1.2 var(--f-ui); max-width: 320px; }
+
+.oce .oce-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: 19px;
+  overflow: hidden;
+  background: var(--lg-button);
+  box-shadow: var(--lg-button-bevel);
+  color: var(--t1);
+  font: 600 13px/1 var(--f-ui);
+  transition: transform 160ms var(--ease-out), opacity var(--dur-1) var(--ease);
+}
+.oce .oce-btn:active:not(:disabled) { transform: scale(.97); }
+.oce .oce-btn:disabled { cursor: default; }
+.oce .oce-btn svg { width: 15px; height: 15px; }
+.oce .oce-btn.is-primary {
+  background: var(--heat);
+  color: var(--heat-ink);
+  box-shadow: 0 8px 24px var(--heat-glow);
+}
+/* export progress fills the button from the left */
+.oce .oce-btn.is-primary[aria-busy="true"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: var(--oce-progress, 0%);
+  background: color-mix(in oklab, var(--heat-ink) 18%, transparent);
+  transition: width 200ms linear;
+}
+
+.oce-body { flex: 1; min-height: 0; }
+
+.oce-state {
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  color: var(--t2);
+  font: 500 14px/1.4 var(--f-ui);
+}
+
+.oce-toast {
+  background: var(--glass-strong) !important;
+  color: var(--t1) !important;
+  border: 1px solid var(--stroke) !important;
+  font-family: var(--f-ui) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oce-btn, .oce-back, .oce-btn.is-primary[aria-busy="true"]::before { transition: none; }
+}

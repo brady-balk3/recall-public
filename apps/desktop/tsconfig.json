@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "ES2020",
     "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
 
@@ -18,7 +18,21 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+
+    /* Vendored OpenCut editor (frontend/opencut) and its Next.js shims */
+    "baseUrl": ".",
+    "paths": {
+      "@opencut/*": ["frontend/opencut/src/*"],
+      "next/link": ["frontend/opencut/shims/next-link.tsx"],
+      "next/image": ["frontend/opencut/shims/next-image.tsx"],
+      "next/navigation": ["frontend/opencut/shims/next-navigation.ts"],
+      "next/script": ["frontend/opencut/shims/empty.tsx"],
+      "next/dynamic": ["frontend/opencut/shims/next-dynamic.tsx"],
+      "next-themes": ["frontend/opencut/shims/next-themes.tsx"],
+      "content-collections": ["frontend/opencut/shims/content-collections.ts"],
+      "@huggingface/transformers": ["frontend/opencut/shims/transformers.ts"]
+    }
   },
   "include": ["frontend"],
   "references": [{ "path": "./tsconfig.node.json" }]

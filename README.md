@@ -4,14 +4,15 @@
 
 Recall is a free Windows app for streamers and the people who clip for them. Point it at a Twitch VOD or a recording on your PC, and it watches the whole thing for you: the big reactions, the funny exchanges, the clutch plays, the moments chat went off. It hands back a deck of short vertical clips, already framed for TikTok, YouTube Shorts and Reels, with your facecam placed and captions timed to what you said.
 
-You stay in charge. Every clip opens in a review editor where you keep or pass, nudge the start and end, fix the framing, or correct a caption before anything is exported.
+You stay in charge. You keep or pass each clip, and any of them opens in the Cutting Room, where you can trim it, fix the framing or correct a caption before anything is exported.
 
 ## What it does
 
 - **Finds moments, not just loud bits.** It combines what's on screen, what you say, how you react, and what chat does, then picks the moments worth watching on their own.
-- **Frames for vertical.** It detects your facecam and stacks it with the gameplay for 9:16 video.
+- **Shows the scan as it runs.** While a scan runs you can see where you talked, where chat picked up, which moments are being checked, and each clip as it's captioned.
+- **Frames for vertical.** It detects your facecam and stacks it with the gameplay for 9:16 video. For VTuber and PNGtuber streams, it can move the avatar to the top of the clip.
 - **Captions automatically.** Word-timed captions from on-device speech recognition, and you can edit them.
-- **Keeps you in control.** Review, trim, reframe and re-render any clip before it leaves the app.
+- **Keeps you in control.** The Cutting Room opens the whole stream on a timeline in seconds, without loading it into memory. Cut the moments Recall missed, adjust the 9:16 framing while you watch, and edit captions on their own track. Every cut renders like any other Recall clip.
 - **Runs entirely on your PC.** No account, no upload, no subscription. Your recordings, scans and clips stay on your machine; the network is used only to download a Twitch VOD you ask for and to fetch the app and its models during setup.
 
 ## System requirements
@@ -101,7 +102,7 @@ On Windows, create a Python environment, install `scripts/requirements.txt`, run
 
 ## Licensing and source
 
-Recall's code is licensed under [AGPL-3.0](LICENSE). Bundled tools and models retain their own licenses and notices.
+Recall's code is licensed under [AGPL-3.0](LICENSE). Bundled tools and models retain their own licenses and notices. The Cutting Room's timeline editor is built on [OpenCut](https://github.com/OpenCut-app/OpenCut) (MIT), vendored in `apps/desktop/frontend/opencut` with Recall's changes listed in its `UPSTREAM` file.
 
 The FFmpeg source mirror for Recall is [recall-ffmpeg-source](https://github.com/brady-balk3/recall-ffmpeg-source). Packaged FFmpeg binaries carry separate build-identity and license notices. The source mirror must be accessible to everyone receiving a public binary release.
 

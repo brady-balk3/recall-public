@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Brady Balk
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("electronAPI", {
   getApiConfig: () => ipcRenderer.sendSync("app:getApiConfig"),
   openFileDialog: () => ipcRenderer.invoke("dialog:openFile"),
+  // Where a dropped or picked file lives on disk ("" for in-memory files), so
+  // the Cutting Room can stream it from there instead of copying it.
+  getPathForFile: (file: File): string | null => {
+    try {
+      return webUtils.getPathForFile(file) || null;
+    } catch {
+      return null;
+    }
+  },
   openFolderDialog: () => ipcRenderer.invoke("dialog:openFolder"),
   writeClipboardText: (text: string) => ipcRenderer.invoke("clipboard:writeText", text),
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),

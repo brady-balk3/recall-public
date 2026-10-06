@@ -3,11 +3,21 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import electron from "vite-plugin-electron/simple";
+import tailwind from "@tailwindcss/vite";
+import wasm from "vite-plugin-wasm";
 import { thirdPartyNotices } from "./build/third-party-notices";
+import { openCutAliases } from "./build/opencut-aliases";
 
 // https://vite.dev/config/
 export default defineConfig({
+  // OpenCut (vendored in frontend/opencut, MIT) runs its compositor in WASM
+  // (top-level await, which Electron's Chromium runs natively), and styles itself with Tailwind scoped to .oc-root.
+  resolve: { alias: openCutAliases },
+  optimizeDeps: { exclude: ["opencut-wasm"] },
+  worker: { format: "es", plugins: () => [wasm()] },
   plugins: [
+    wasm(),
+    tailwind(),
     react(),
     thirdPartyNotices(),
     electron({

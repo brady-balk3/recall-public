@@ -40,6 +40,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Scissors,
   Sparkles,
   Trash2,
   Trophy,
@@ -276,7 +277,7 @@ function NewCompilationSheet({
   const canAdvance = kind === "match" ? !!match : true;
 
   const suggestedTitle = kind === "match"
-    ? match ? `${matchKills(match)} — ${matchOutcome(match)}` : "Match montage"
+    ? match ? `${matchKills(match)}, ${matchOutcome(match)}` : "Match montage"
     : recipe
       ? recipe.label.replace("{game}", recipeGame[recipe.id] || recipe.games[0] || "").trim()
       : query.trim() || `Best of ${now.toLocaleDateString(undefined, { month: "long" })}`;
@@ -317,7 +318,7 @@ function NewCompilationSheet({
           <p>
             {step === 1
               ? "Two questions, then Recall cuts it."
-              : "Length is your control, not clip count — Recall solves for the runtime you ask for."}
+              : "Length is your control, not clip count. Recall solves for the runtime you ask for."}
           </p>
         </div>
 
@@ -352,7 +353,7 @@ function NewCompilationSheet({
                   <span className="compilation-source-mark" aria-hidden="true"><Search size={17} /></span>
                   <span className="compilation-source-copy">
                     <strong>A theme, across sessions</strong>
-                    <small>Best snipes, jump scares, clutches — from every VOD you have scanned</small>
+                    <small>Best snipes, jump scares and clutches from every VOD you have scanned</small>
                   </span>
                   <span className="compilation-radio" aria-hidden="true" />
                 </button>
@@ -369,7 +370,7 @@ function NewCompilationSheet({
                   }}>
                     {sessions.map((session) => (
                       <option key={session.id} value={session.id}>
-                        {session.source_date ? `${session.source_date} — ` : ""}{session.session_name}
+                        {session.source_date ? `${session.source_date} · ` : ""}{session.session_name}
                       </option>
                     ))}
                   </select>
@@ -541,7 +542,7 @@ function NewCompilationSheet({
         <div className="compilation-sheet-foot">
           <button
             type="button"
-            className="compilation-btn"
+            className="btn ghost"
             onClick={() => (step === 1 ? onCancel() : setStep(1))}
             disabled={busy}
           >
@@ -551,15 +552,15 @@ function NewCompilationSheet({
           {step === 1 ? (
             <button
               type="button"
-              className="cta-accent"
+              className="btn heat"
               onClick={() => setStep(2)}
               disabled={!canAdvance}
             >
               Next
             </button>
           ) : (
-            <button type="button" className="cta-accent" onClick={submit} disabled={busy}>
-              <Sparkles size={15} aria-hidden="true" />
+            <button type="button" className="btn heat" onClick={submit} disabled={busy}>
+              <Scissors size={15} aria-hidden="true" />
               {busy ? "Cutting…" : "Cut the montage"}
             </button>
           )}
@@ -757,7 +758,7 @@ export default function CompilationProjects({
     const summary = built.project.selection_summary;
     const skipped = (summary.offline_moment_count || 0) + (summary.oversized_clip_count || 0);
     setMessage(
-      `Montage ready — ${plural(built.clips, "moment")}, ${runtime(built.project.reel_duration_seconds || 0)}.`
+      `Montage ready: ${plural(built.clips, "moment")}, ${runtime(built.project.reel_duration_seconds || 0)}.`
       + (skipped ? ` ${skipped} more matched but could not be used.` : ""),
     );
   };
@@ -814,7 +815,7 @@ export default function CompilationProjects({
       setProjects((current) => current.map((entry) => (
         entry.id === built.project.id ? built.project : entry
       )));
-      setMessage(`Montage rebuilt — ${plural(built.clips, "moment")}, ${runtime(built.project.reel_duration_seconds || 0)}.`);
+      setMessage(`Montage rebuilt: ${plural(built.clips, "moment")}, ${runtime(built.project.reel_duration_seconds || 0)}.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Recall could not rebuild that montage.");
     } finally {
@@ -1079,21 +1080,15 @@ export default function CompilationProjects({
       <section className="compilation-workspace" aria-labelledby="compilation-title">
         <div className="compilation-shelf">
           <header className="compilation-shelf-head">
-            <div className="compilation-shelf-copy">
-              <h1 id="compilation-title">Compilations</h1>
-              <p>
-                Vertical montages cut from a single match, or from a theme across every
-                session you have scanned.
-              </p>
-            </div>
+            <p className="t3" id="compilation-title">A compilation cuts every kill from one match, or the best moments on one theme from every stream you've scanned.</p>
             <span className="compilation-spacer" />
             <button
               type="button"
-              className="cta-accent"
+              className="btn heat"
               onClick={() => setSheetOpen(true)}
               disabled={generating}
             >
-              <Plus size={15} aria-hidden="true" />
+              <Plus aria-hidden="true" />
               {generating ? "Cutting…" : "New compilation"}
             </button>
           </header>
@@ -1101,12 +1096,12 @@ export default function CompilationProjects({
           {message && <div className="compilation-message" role="status">{message}</div>}
 
           {generating && (
-            <div className="compilation-working-strip" role="status">
-              <Sparkles size={16} aria-hidden="true" />
+            <div className="compilation-working-strip notice glass" role="status">
+              <Film size={16} aria-hidden="true" />
               <strong>{buildStep || "Working…"}</strong>
               <span>Each moment is a real render. You can stop at any point.</span>
               <span className="compilation-spacer" />
-              <button type="button" className="compilation-btn is-sm" onClick={() => { cutStop.current = true; }}>
+              <button type="button" className="btn sm" onClick={() => { cutStop.current = true; }}>
                 <X size={13} aria-hidden="true" />Stop
               </button>
             </div>
@@ -1115,17 +1110,11 @@ export default function CompilationProjects({
           {loading ? (
             <p className="compilation-note">Opening your compilations…</p>
           ) : !projects.length ? (
-            <div className="compilation-empty">
-              <svg width="64" height="40" viewBox="0 0 64 40" fill="none" stroke="currentColor"
-                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M2 30c6 0 8-16 14-16s7 10 12 10 7-18 13-18 8 22 14 22" opacity=".75" />
-                <circle cx="28" cy="24" r="2.6" fill="currentColor" stroke="none" />
-                <circle cx="45" cy="12" r="2.6" fill="currentColor" stroke="none" />
-              </svg>
-              <h2>No compilations yet</h2>
-              <p>Scan a session, then cut every kill from one game into a vertical montage.</p>
-              <button type="button" className="cta-accent" onClick={() => setSheetOpen(true)}>
-                <Plus size={15} aria-hidden="true" />New compilation
+            <div className="compilation-empty empty glass">
+              <h3 className="disp">No compilations yet</h3>
+              <p>Pull a theme from every stream you've scanned, or cut every kill from one match.</p>
+              <button type="button" className="btn heat" onClick={() => setSheetOpen(true)}>
+                <Plus aria-hidden="true" />New compilation
               </button>
             </div>
           ) : (
@@ -1134,7 +1123,7 @@ export default function CompilationProjects({
                 <button
                   type="button"
                   key={entry.id}
-                  className="compilation-card"
+                  className="compilation-card draft glass"
                   onClick={() => void openProject(entry.id)}
                 >
                   <span className={`compilation-card-thumb ${entry.reel_url ? "" : "is-empty"}`}>
@@ -1164,7 +1153,7 @@ export default function CompilationProjects({
                     )}
                   </span>
                   <span className="compilation-card-meta">
-                    <strong>{entry.title}</strong>
+                    <strong className="disp">{entry.title}</strong>
                     <small className="t-num">
                       {entry.included_count
                         ? `${plural(entry.included_count, "moment")} · ${runtime(entry.total_duration_seconds)}`
@@ -1184,44 +1173,94 @@ export default function CompilationProjects({
   /* ---------------- Bench ---------------- */
   return (
     <section className="compilation-workspace" aria-labelledby="compilation-title">
-      <header className="compilation-bench-top">
-        <button type="button" className="compilation-back" onClick={closeProject}>
-          <ChevronLeft size={14} aria-hidden="true" />All compilations
+      <div className="row compilation-bench-top">
+        <button type="button" className="btn ghost sm" onClick={closeProject}>
+          <ChevronLeft aria-hidden="true" />Compilations
         </button>
-        <input
-          className="compilation-docname"
-          value={titleDraft}
-          id="compilation-title"
-          aria-label="Compilation title"
-          onChange={(event) => setTitleDraft(event.currentTarget.value)}
-          onKeyDown={(event) => { if (event.key === "Enter") void rename(); }}
-          onBlur={() => void rename()}
-        />
-        <span className={`compilation-pill ${project.reel_stale ? "is-stale" : project.reel_url ? "is-ready" : "is-draft"}`}>
-          {project.reel_stale
-            ? <><RefreshCw size={11} aria-hidden="true" />Needs a rebuild</>
-            : project.reel_url
-              ? <><Check size={11} aria-hidden="true" />Built</>
-              : <><Clock size={11} aria-hidden="true" />Not built yet</>}
-        </span>
-        <div className="compilation-topfacts t-num">
-          <strong>{runtime(project.reel_duration_seconds || project.total_duration_seconds)}</strong>
-          <i aria-hidden="true" />
-          <span>{plural(project.included_count, "moment")}</span>
-          <i aria-hidden="true" />
-          <span>
-            {project.match_label || `${projectDate(project.date_from)}–${projectDate(project.date_to)}`}
-          </span>
-        </div>
         <span className="compilation-spacer" />
         <button
           type="button"
-          className="compilation-btn is-sm"
+          className="btn sm"
           onClick={() => setSheetOpen(true)}
           disabled={generating}
         >
-          <Plus size={13} aria-hidden="true" />New from this match
+          <Plus aria-hidden="true" />New from this match
         </button>
+        <button
+          type="button"
+          className={`btn sm ghost danger ${deleteArmed ? "is-armed" : ""}`}
+          onClick={() => void removeProject()}
+        >
+          {deleteArmed ? <X aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
+          {deleteArmed ? "Confirm delete" : "Delete draft"}
+        </button>
+      </div>
+
+      <header className="deck-head compilation-head">
+        <div className="dk-title">
+          <div className="row wrap dk-status">
+            <span className={`badge ${project.reel_stale ? "maybe" : project.reel_url ? "keep" : project.status === "approved" ? "heat" : ""}`}>
+              {project.reel_stale ? "Needs a rebuild" : project.reel_url ? "Montage ready" : project.status === "approved" ? "Approved" : "Draft"}
+            </span>
+            <span className="t3 num">
+              {runtime(project.reel_duration_seconds || project.total_duration_seconds)} · {plural(project.included_count, "moment")} · {project.match_label || `${projectDate(project.date_from)} to ${projectDate(project.date_to)}`}
+            </span>
+          </div>
+          <input
+            className="compilation-docname disp"
+            value={titleDraft}
+            id="compilation-title"
+            aria-label="Compilation title"
+            onChange={(event) => setTitleDraft(event.currentTarget.value)}
+            onKeyDown={(event) => { if (event.key === "Enter") void rename(); }}
+            onBlur={() => void rename()}
+          />
+          <p className="t2 compilation-state">
+            <b>{project.reel_stale
+              ? "Rebuild the video to see your changes"
+              : project.reel_url
+                ? "Montage ready"
+                : project.uncut_count > 0
+                  ? `${plural(project.uncut_count, "moment")} still to cut`
+                  : project.status === "approved"
+                    ? (hasExportablePair ? "Approved and ready to export" : "Sequence approved, source needed")
+                    : "Review the generated sequence"}</b>{" "}
+            {project.reel_stale
+              ? "Stitching again is quick. The moments are already rendered."
+              : project.reel_url
+                ? `${runtime(project.reel_duration_seconds || 0)} · ${plural(project.included_count, "moment")} · saved to your compilations`
+                : project.uncut_count > 0
+                  ? "Recall found these moments in the match but hasn't rendered them yet."
+                  : project.status === "approved"
+                    ? (hasExportablePair
+                      ? `${project.available_count} of ${project.included_count} included clips can be prepared on this PC.${project.available_count < project.included_count ? " Restore source media to recover the rest." : ""}`
+                      : `Restore source media for at least ${2 - project.available_count} more included ${noun(2 - project.available_count, "clip")} to export.`)
+                    : "Reordering or changing the included set always returns it to draft."}
+          </p>
+        </div>
+        <div className="row wrap dk-actions">
+          {project.reel_stale ? (
+            <button type="button" className="btn heat lg" onClick={() => void rebuildReel()} disabled={building || generating}>
+              <RefreshCw aria-hidden="true" />{building ? "Rebuilding…" : "Rebuild video"}
+            </button>
+          ) : project.reel_url ? (
+            <button type="button" className="btn heat lg" onClick={() => void saveReel()} disabled={busy}>
+              <Download aria-hidden="true" />{saving ? "Saving…" : "Save video…"}
+            </button>
+          ) : project.uncut_count > 0 ? (
+            <button type="button" className="btn heat lg" onClick={() => void cutMoments()} disabled={building || generating}>
+              <Film aria-hidden="true" />Cut {plural(project.uncut_count, "moment")}
+            </button>
+          ) : project.status === "approved" ? (
+            <button type="button" className="btn heat lg" onClick={() => void exportProject()} disabled={!canExport}>
+              <Film aria-hidden="true" />{compiling ? "Preparing reel…" : (hasExportablePair ? "Export approved reel" : "Restore source to export")}
+            </button>
+          ) : (
+            <button type="button" className="btn heat lg" onClick={() => void approve()} disabled={!canApprove}>
+              <Check aria-hidden="true" />Approve sequence
+            </button>
+          )}
+        </div>
       </header>
 
       {message && <div className="compilation-message" role="status">{message}</div>}
@@ -1312,7 +1351,7 @@ export default function CompilationProjects({
             <div className="compilation-screen">
               {generating || building ? (
                 <div className="compilation-working" role="status">
-                  <Sparkles size={26} aria-hidden="true" />
+                  <Film size={26} aria-hidden="true" />
                   <strong>{buildStep || "Working…"}</strong>
                   <span>Each moment is a real render. You can stop at any point.</span>
                   <button type="button" onClick={() => { cutStop.current = true; }}>
@@ -1369,12 +1408,12 @@ export default function CompilationProjects({
           </div>
         )}
 
-        <div className="compilation-board">
+        <div className="compilation-board panel glass">
           <div className="compilation-board-head">
-            <h2>Moments in the reel</h2>
+            <h2 className="disp">Moments in the reel</h2>
             <span className="compilation-count t-num">{project.items.length}</span>
             <span className="compilation-spacer" />
-            <div className="compilation-seg" role="group" aria-label="Audio in the montage">
+            <div className="seg compilation-seg" role="group" aria-label="Audio in the montage">
               <button
                 type="button"
                 className={project.muted_count > 0 ? "is-on" : ""}
@@ -1488,7 +1527,7 @@ export default function CompilationProjects({
                 {selected.clip_id && selected.job_id && (
                   <button
                     type="button"
-                    className="compilation-btn is-sm"
+                    className="btn sm"
                     onClick={() => void onOpenClip(selected.job_id!, selected.clip_id!)}
                   >
                     <Play size={13} aria-hidden="true" />Review
@@ -1496,7 +1535,7 @@ export default function CompilationProjects({
                 )}
                 <button
                   type="button"
-                  className="compilation-btn is-sm"
+                  className="btn sm"
                   onClick={() => toggleMuted(selected.id)}
                   disabled={busy || !selected.included}
                   aria-pressed={selected.muted}
@@ -1507,7 +1546,7 @@ export default function CompilationProjects({
                 </button>
                 <button
                   type="button"
-                  className={`compilation-btn is-sm ${selected.included ? "is-danger" : ""}`}
+                  className={`btn sm ${selected.included ? "ghost danger" : ""}`}
                   onClick={() => toggleItem(selected.id)}
                   disabled={busy}
                   aria-pressed={!selected.included}
@@ -1522,62 +1561,6 @@ export default function CompilationProjects({
         </div>
       </div>
 
-      <footer className="compilation-dock">
-        <div className="compilation-dock-copy">
-          <strong>{project.reel_stale
-            ? "Rebuild the video to see your changes"
-            : project.reel_url
-              ? "Montage ready"
-              : project.uncut_count > 0
-                ? `${plural(project.uncut_count, "moment")} still to cut`
-                : project.status === "approved"
-                  ? (hasExportablePair ? "Approved and ready to export" : "Sequence approved — source needed")
-                  : "Review the generated sequence"}</strong>
-          <small>
-            {project.reel_stale
-              ? "Stitching again is quick — the moments are already rendered."
-              : project.reel_url
-                ? `${runtime(project.reel_duration_seconds || 0)} · ${plural(project.included_count, "moment")} · saved to your compilations`
-                : project.uncut_count > 0
-                  ? "Recall found these moments in the match but has not rendered them yet."
-                  : project.status === "approved"
-                    ? (hasExportablePair
-                      ? `${project.available_count} of ${project.included_count} included clips can be prepared locally.${project.available_count < project.included_count ? " Restore source media to recover the rest." : ""}`
-                      : `Restore source media for at least ${2 - project.available_count} more included ${noun(2 - project.available_count, "clip")} to export.`)
-                    : "Reordering or changing the included set always returns this project to draft status."}
-          </small>
-        </div>
-        <span className="compilation-spacer" />
-        <button
-          type="button"
-          className={`compilation-btn is-danger ${deleteArmed ? "is-armed" : ""}`}
-          onClick={() => void removeProject()}
-        >
-          {deleteArmed ? <X size={13} aria-hidden="true" /> : <Trash2 size={13} aria-hidden="true" />}
-          {deleteArmed ? "Confirm delete" : "Delete draft"}
-        </button>
-        {project.reel_stale ? (
-          <button type="button" className="cta-accent" onClick={() => void rebuildReel()} disabled={building || generating}>
-            <RefreshCw size={14} aria-hidden="true" />{building ? "Rebuilding…" : "Rebuild video"}
-          </button>
-        ) : project.reel_url ? (
-          <button type="button" className="cta-accent" onClick={() => void saveReel()} disabled={busy}>
-            <Download size={14} aria-hidden="true" />{saving ? "Saving…" : "Save video…"}
-          </button>
-        ) : project.uncut_count > 0 ? (
-          <button type="button" className="cta-accent" onClick={() => void cutMoments()} disabled={building || generating}>
-            <Film size={14} aria-hidden="true" />Cut {plural(project.uncut_count, "moment")}
-          </button>
-        ) : project.status === "approved" ? (
-          <button type="button" className="cta-accent" onClick={() => void exportProject()} disabled={!canExport}>
-            <Film size={14} aria-hidden="true" />{compiling ? "Preparing reel…" : (hasExportablePair ? "Export approved reel" : "Restore source to export")}
-          </button>
-        ) : (
-          <button type="button" className="cta-accent" onClick={() => void approve()} disabled={!canApprove}>
-            <Check size={14} aria-hidden="true" />Approve sequence
-          </button>
-        )}
-      </footer>
       {sheet}
     </section>
   );

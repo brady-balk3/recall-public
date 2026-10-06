@@ -1245,6 +1245,66 @@ def _locate_plate_by_edges(cv2, frames, box, width, height, seed=None):
     ys_top = _supported(ys_top, pinned["top"])
     ys_bottom = _supported(ys_bottom, pinned["bottom"])
 
+    # A flush plate whose claim starts inside it has no line on that side at
+    # all when the camera carries no interior detail to stand in for one, so no
+    # rectangle forms and _extend_flush_sides never runs. Measured on a Fortnite
+    # VOD: the plate's right/top/bottom were all found, the left had nothing,
+    # and the fallback snap latched onto a lobby menu below the cam instead --
+    # every export pulled gameplay in beside the camera. Offer the frame
+    # boundary itself, on the same terms _extend_flush_sides grows to it: the
+    # window sampled it, no found line sits between it and the claim, and the
+    # plate's perpendicular borders run across the strip (checked per rectangle
+    # in the loop below, since those borders are what the loop is choosing).
+    win_h, win_w = stack.shape[1], stack.shape[2]
+
+    def _clear_between(found, lo: int, hi: int) -> bool:
+        return not any(lo < int(i) < hi for i, _p in found)
+
+    boundary = {}
+    if (reaches["left"] and not pinned["left"] and claimed[0] > PLATE_EDGE_PIN_PX
+            and _clear_between(xs_found, 0, claimed[0])):
+        boundary["left"] = 0
+        xs_left = xs_left + [(0, _prominence_at(col_profile, 0))]
+    if (reaches["right"] and not pinned["right"]
+            and win_w - claimed[2] > PLATE_EDGE_PIN_PX
+            and _clear_between(xs_found, claimed[2], win_w)):
+        boundary["right"] = win_w
+        xs_right = xs_right + [(win_w, _prominence_at(col_profile, win_w))]
+    if (reaches["top"] and not pinned["top"] and claimed[1] > PLATE_EDGE_PIN_PX
+            and _clear_between(ys_found, 0, claimed[1])):
+        boundary["top"] = 0
+        ys_top = ys_top + [(0, _prominence_at(row_profile, 0))]
+    if (reaches["bottom"] and not pinned["bottom"]
+            and win_h - claimed[3] > PLATE_EDGE_PIN_PX
+            and _clear_between(ys_found, claimed[3], win_h)):
+        boundary["bottom"] = win_h
+        ys_bottom = ys_bottom + [(win_h, _prominence_at(row_profile, win_h))]
+
+    continues_cache = {}
+
+    def _boundary_ok(li: int, ti: int, ri: int, bi: int) -> bool:
+        """Every boundary side in this rectangle is backed by continuing borders."""
+        checks = []
+        if boundary.get("left") == li:
+            checks.append((ti, bi, 0, (claimed[0], ri), (0, claimed[0])))
+        if boundary.get("right") == ri:
+            checks.append((ti, bi, 0, (li, claimed[2]), (claimed[2], win_w)))
+        if boundary.get("top") == ti:
+            checks.append((li, ri, 1, (claimed[1], bi), (0, claimed[1])))
+        if boundary.get("bottom") == bi:
+            checks.append((li, ri, 1, (ti, claimed[3]), (claimed[3], win_h)))
+        for key in checks:
+            if key not in continues_cache:
+                first, second, axis, inside, outside = key
+                continues_cache[key] = (
+                    inside[1] > inside[0]
+                    and _border_continues(
+                        stack, first, second, axis, inside, outside)
+                )
+            if not continues_cache[key]:
+                return False
+        return True
+
     # Compute the baseline from the claimed sides directly. Reading only candidate
     # lines can produce a zero baseline when nearby-line suppression removes a side
     # and would silently disable the required gain over existing geometry.
@@ -1292,6 +1352,8 @@ def _locate_plate_by_edges(cv2, frames, box, width, height, seed=None):
                     if not (RELOCATE_MIN_KEEP <= area_ratio <= RELOCATE_MAX_GROW):
                         continue
                     if _iou(cand, [x, y, w, h]) < RELOCATE_MIN_IOU:
+                        continue
+                    if boundary and not _boundary_ok(li, ti, ri, bi):
                         continue
                     support = (lp + rp + tp + bp) / 4.0
                     score = support * _aspect_prior(ri - li, bi - ti)

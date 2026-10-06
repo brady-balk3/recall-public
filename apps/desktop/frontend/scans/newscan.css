@@ -1,0 +1,192 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* New stream: the drop-or-paste composer, the chosen source, scan options, and
+   the several-VODs batch. Shares page primitives with ui.css. */
+
+.imp2 { max-width: calc(1180px + var(--page-pad) * 2); }
+.imp-stack { display: grid; gap: 16px; }
+.imp2 .row { display: flex; align-items: center; gap: 10px; }
+.imp2 .eyebrow { font-size: 12.5px; font-weight: 600; color: var(--t3); }
+.imp2 .eyebrow.is-ready { color: var(--keep); }
+.imp2 .eyebrow.is-bad { color: var(--danger); }
+
+/* ── composer: one zone for a drop, a link, or a file ── */
+.composer {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  padding: 56px 32px 36px;
+  border-radius: 30px;
+  text-align: center;
+  background: radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, .05), transparent 60%), var(--glass);
+  box-shadow: inset 0 0 0 1.5px var(--stroke);
+  transition: box-shadow var(--dur-2) ease, transform var(--dur-2) var(--ease-out);
+}
+.composer::before {
+  content: "";
+  position: absolute;
+  inset: 10px;
+  border-radius: 22px;
+  border: 1.5px dashed var(--stroke-2);
+  pointer-events: none;
+  transition: border-color var(--dur-2) ease;
+}
+.composer.over { transform: scale(1.005); box-shadow: inset 0 0 0 2px var(--h2), 0 0 0 4px var(--heat-soft), 0 30px 80px -20px var(--heat-glow); }
+.composer.over::before { border-color: var(--h2); }
+.cmp-orb {
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  display: grid;
+  place-items: center;
+  background: var(--lg-heat-sheen), var(--heat);
+  color: var(--heat-ink);
+  box-shadow: 0 16px 40px -10px var(--heat-glow);
+}
+.cmp-orb svg { width: 28px; height: 28px; }
+.composer h2 { font-size: clamp(30px, 2.6vw, 42px); line-height: 1.08; text-wrap: balance; }
+.cmp-field {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(660px, 100%);
+  height: 58px;
+  margin: 0;
+  padding: 0 7px 0 18px;
+  border-radius: 18px;
+  background: rgba(0, 0, 0, .4);
+  box-shadow: inset 0 0 0 1px var(--stroke-2);
+  color: var(--t3);
+  transition: box-shadow var(--dur-2) ease;
+}
+.cmp-field:focus-within { box-shadow: inset 0 0 0 1.5px var(--heat-line), 0 0 0 4px var(--heat-soft); }
+.cmp-field > svg { width: 18px; height: 18px; flex: 0 0 auto; }
+.cmp-field .field { flex: 1; min-width: 0; height: 44px; padding: 0; background: none; box-shadow: none; font-size: 15px; }
+.cmp-field .field:focus { box-shadow: none; }
+.cmp-field .btn { height: 44px; padding: 0 24px; }
+.cmp-err { position: relative; z-index: 1; margin: -6px 0 0; font-size: 13px; color: var(--danger); }
+.cmp-alt { position: relative; z-index: 1; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.composer > small { position: relative; z-index: 1; font-size: 12.5px; }
+:root[data-theme="light"] .cmp-field { background: rgba(255, 255, 255, .7); }
+
+.lands2 { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 40px; margin-top: 18px; padding: 18px 24px; border-radius: 22px; }
+.l2-item span { display: block; font-size: 12px; }
+.l2-item b { display: block; margin-top: 2px; font-size: 15px; font-weight: 600; }
+
+/* ── the chosen source ── */
+.src {
+  position: relative;
+  display: grid;
+  grid-template-columns: clamp(220px, 30%, 320px) minmax(0, 1fr);
+  gap: 22px;
+  align-items: center;
+  padding: 16px 16px 16px 16px;
+  border-radius: var(--r-lg);
+}
+.src.is-bad { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--danger) 40%, transparent); }
+.src-poster {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--fill);
+  display: grid;
+  place-items: center;
+  color: var(--danger);
+}
+.src-poster img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.src-poster > svg { width: 28px; height: 28px; }
+.src-copy { display: grid; gap: 8px; min-width: 0; padding-right: 90px; }
+.src-copy h3 { font-size: clamp(24px, 2vw, 32px); line-height: 1.1; overflow-wrap: anywhere; }
+.src-note { margin: 2px 0 0; font-size: 13px; max-width: 62ch; }
+.src-change { position: absolute; top: 14px; right: 14px; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13.5px; color: var(--t3); }
+.skeleton {
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--fill), var(--fill-2), var(--fill));
+  background-size: 400px 100%;
+  animation: imp-shimmer 1.2s linear infinite;
+}
+@keyframes imp-shimmer { from { background-position: -400px 0; } to { background-position: 400px 0; } }
+
+/* ── scan options ── */
+.imp-opts { padding: 22px 24px 8px; }
+.lbl { display: block; margin-bottom: 8px; font-size: 12.5px; font-weight: 600; color: var(--t3); }
+.setrow { display: flex; align-items: center; gap: 16px; margin-top: 16px; padding: 16px 0; border-top: 1px solid var(--stroke); }
+.setrow .st { flex: 1; min-width: 0; }
+.setrow .st b { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.setrow .st small { display: block; margin-top: 3px; max-width: 64ch; font-size: 12.5px; color: var(--t3); }
+.setrow .badge { height: 20px; padding: 0 8px; font-size: 11px; }
+.imp-go { gap: 16px; }
+
+/* when it's ready: measured on this PC, never guessed */
+.plan { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.plan > div { display: grid; align-content: start; gap: 4px; padding: 14px 16px; border-radius: 16px; background: var(--fill); }
+.plan span { font-size: 12px; color: var(--t3); }
+.plan b { font: 700 clamp(22px, 2vw, 30px)/1.1 var(--f-disp); }
+.plan small { font-size: 12px; color: var(--t3); }
+.linkish { justify-self: start; padding: 0; border: 0; background: none; color: var(--t2); font: 500 12px var(--f-ui); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.linkish:hover { color: var(--t1); }
+.imp-go .t3 { font-size: 13px; }
+
+/* ── several VODs ── */
+.imp-batch-text { height: auto; min-height: 112px; padding: 14px 16px; resize: vertical; font-family: var(--f-mono, ui-monospace, monospace); font-size: 13px; line-height: 1.6; }
+.imp-batch-foot { margin-top: 12px; }
+.imp-batch-foot .t3 { font-size: 12.5px; }
+.imp-batch-list { display: grid; gap: 8px; }
+.brow {
+  display: grid;
+  grid-template-columns: 30px 112px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 10px;
+  border-radius: 18px;
+}
+.brow.is-bad { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--danger) 35%, transparent); }
+.brow .n { font: 700 20px/1 var(--f-disp); color: var(--t3); text-align: center; }
+.brow-poster { position: relative; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: var(--fill); }
+.brow-poster img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.brow.is-bad .brow-poster { filter: grayscale(1) brightness(.5); }
+.brow-copy { display: grid; gap: 2px; min-width: 0; }
+.brow-name {
+  width: 100%;
+  height: 30px;
+  margin-left: -8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--t1);
+  font: 600 14.5px var(--f-ui);
+  text-overflow: ellipsis;
+  transition: background-color var(--dur-1) ease;
+}
+.brow-name:hover { background: var(--fill); }
+.brow-name:focus { outline: none; background: var(--fill); box-shadow: inset 0 0 0 1.5px var(--heat-line); }
+.brow-copy small { font-size: 12.5px; color: var(--t3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brow-actions { gap: 8px; }
+.chip.is-on { background: var(--heat-soft); color: var(--t1); box-shadow: inset 0 0 0 1.5px var(--heat-line); }
+.chip svg { width: 13px; height: 13px; }
+
+.runsum { display: flex; flex-wrap: wrap; align-items: center; gap: 18px 36px; padding: 22px 24px; border-radius: var(--r-lg); }
+.runsum > div > b { display: block; font-size: 34px; line-height: 1; }
+.runsum > div > span { display: block; margin-top: 6px; font-size: 12.5px; color: var(--t3); }
+.runsum-go { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; }
+.imp-batch-note { font-size: 13px; }
+.imp-batch-empty { display: grid; gap: 8px; padding: 36px 32px; border-radius: var(--r-xl); text-align: center; justify-items: center; }
+.imp-batch-empty h3 { font-size: 30px; }
+.imp-batch-empty p { max-width: 52ch; font-size: 14.5px; }
+
+@media (max-width: 900px) {
+  .src { grid-template-columns: minmax(0, 1fr); }
+  .src-copy { padding-right: 0; }
+  .plan { grid-template-columns: minmax(0, 1fr); }
+  .brow { grid-template-columns: 26px 88px minmax(0, 1fr); }
+  .brow-actions { grid-column: 2 / -1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer, .composer.over { transform: none; }
+  .skeleton { animation: none; }
+}

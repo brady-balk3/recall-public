@@ -23,6 +23,7 @@ render honest UI just read the state.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Dict, List, Optional, Sequence
 
 from core.source_identity import canonical_source_key
@@ -132,6 +133,14 @@ def clip_media_state(row: Any, source_availability: str) -> str:
     return UNAVAILABLE
 
 
+def edited_video_name(clip_id: str) -> Optional[str]:
+    """File name of the in-app editor's cut of a clip, beside its render.
+
+    None for an id that can't name a file safely."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "", str(clip_id or ""))
+    return f"edit_{safe}.mp4" if safe else None
+
+
 def annotate_clip_rows(
     db: Any,
     rows: List[Dict[str, Any]],
@@ -151,6 +160,12 @@ def annotate_clip_rows(
     for row in rows:
         row["media_state"] = clip_media_state(
             row, availability.get(row.get("job_id"), SOURCE_GONE)
+        )
+        # The creator's editor cut, when saved, lives next to the render.
+        export_path = _get(row, "export_path")
+        name = edited_video_name(row.get("id"))
+        row["edited_video"] = (
+            name if export_path and name and _is_file(os.path.join(os.path.dirname(export_path), name)) else None
         )
     return rows
 

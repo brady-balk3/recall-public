@@ -1,0 +1,88 @@
+OpenCut classic (https://github.com/OpenCut-app/OpenCut), MIT, see ./LICENSE
+cf5e79e919144200294fb9fed22a222592a0aeea Sun May 17 18:07:21 2026 +0200
+
+src/ is the import closure of apps/web/src/app/editor/[project_id]/page.tsx at
+that commit, with `@/` rewritten to `@opencut/` and "use client" removed.
+Next.js APIs resolve to ./shims (see build/opencut-aliases.ts). Static files
+live in apps/desktop/public/opencut.
+
+Recall changes to upstream files (everything else is verbatim):
+- Type fixes for Recall's stricter tsconfig: object-arg calls to
+  IndexedDBAdapter / DefinitionRegistry.register / adapter.set in the storage
+  migrations and sticker registry (upstream passed positional args), unused
+  imports/locals removed, EyeDropper typed locally.
+- Portals target the body-level `.oc-portal-host` (src/recall/portal-host.ts)
+  so menus, dialogs and drag ghosts stay inside the scoped stylesheet:
+  components/ui/{context-menu,dialog,dropdown-menu,popover,select,sheet}.tsx,
+  components/editor/panels/assets/draggable-item.tsx,
+  timeline/components/audio-volume-line.tsx.
+- Captions tab replaced by src/recall/captions-view.tsx: Recall's own timed
+  words (and the creator's corrections) become text cues; when Recall burned
+  captions in, the clip is first swapped for a caption-free render. Upstream's
+  in-browser Whisper is no longer imported (components/editor/panels/assets/index.tsx).
+- Offline: Sounds tab hidden (assets-panel-store.tsx, tabbar.tsx);
+  platform guide logos no longer load from a CDN (guides/definitions/platforms.tsx);
+  no Google Fonts: the picker offers system fonts plus Recall's bundled faces
+  (fonts/google-fonts.ts, fonts/use-font-atlas.ts, src/recall/bundled-fonts.ts,
+  components/ui/font-picker.tsx sprite path); the Windows faces Recall's
+  captions use are listed as system fonts (fonts/system-fonts.ts).
+- Asset URLs are page-relative (fonts/google-fonts.ts,
+  services/renderer/effect-preview.ts) so they resolve under file:// in Electron.
+- The text Font Family field uses the FontPicker instead of a free-text box
+  (components/editor/panels/properties/components/property-param-field.tsx).
+- Streamed sources (src/recall/streamed-media.ts): a full VOD is an empty
+  placeholder File registered to a URL on Recall's engine and read by exact
+  byte range (mediabunny CustomSource), never copied into memory or OPFS.
+  Every mediabunny Input now takes sourceFor(file) instead of BlobSource
+  (media/mediabunny.ts, services/video-cache/service.ts,
+  core/managers/audio-manager.ts, media/audio.ts). For streamed files the
+  export mixdown and the prepared-clip audio decode only the element's
+  source window and shift trimStart to match (media/audio.ts,
+  audio-manager.ts); storage keeps a streamRef, not the file
+  (services/storage/{types,service}.ts); import skips the browser-storage
+  quota check (media/processing.ts); the waveform comes from the engine
+  instead of a whole-track decode (services/waveform-cache/service.ts ->
+  src/recall/streamed-waveform.ts).
+- A streamed video element on the timeline draws real frames (engine
+  filmstrip pages) and the engine waveform instead of one repeated poster
+  (timeline/components/timeline-element.tsx TiledMediaContent ->
+  src/recall/streamed-timeline.tsx, paging in streamed-filmstrip.ts).
+- The timeline applies view requests from Recall (fit a freshly opened VOD,
+  centre a moment) via src/recall/timeline-view.ts
+  (timeline/components/index.tsx).
+- A Moments tab (src/recall/moments-view.tsx), shown only when Recall supplies
+  moments (the Cutting Room) and opened by default there
+  (components/editor/panels/assets/{assets-panel-store,tabbar,index}.tsx).
+  The streamed element also draws the reaction curve and moment bars.
+- SeedSource (../OpenCutEditor.tsx) puts the source on an empty timeline
+  (first open, or a reopen after it was cleared), reusing a copy in the bin.
+- The Cutting Room frames pieces on a 9:16 canvas (src/recall/framing.ts):
+  transform + rectangle mask from the engine's layout layers, facecam copies
+  on derived "recall-framing:" tracks. timeline/placement/overlap.ts refuses
+  those tracks as placement targets.
+- Track heights can be overridden per type by the host
+  (timeline/components/track-layout.ts setTrackHeightOverrides).
+- The preview draws a host overlay over the frame box
+  (preview/components/index.tsx; used for the Cutting Room's facecam).
+- Cutting Room edits are composited over Recall's clip renders with the
+  normal buildScene/SceneExporter path, outside the open project
+  (src/recall/carry-edits.ts). J/K/L shuttle: src/recall/shuttle.ts.
+- The top bar takes host actions (extraActions) and an action with a live
+  label/icon (OpenCutAction.stateFor/icon); inline mode drops the window-
+  control gap (../OpenCutEditor.tsx, ../editor-shell.css).
+- The properties panel shows Recall's clip panel for stream pieces and an
+  empty selection (components/editor/panels/properties/index.tsx,
+  src/recall/clip-panel.tsx). Fades are Recall-owned opacity/volume
+  keyframes (src/recall/fades.ts). A titled piece shows its title on the
+  timeline (timeline/components/timeline-element.tsx).
+- Pieces carry their caption words in a "recall.captions" param; a derived
+  "recall-captions:" text track shows them in Recall's caption style and is
+  never carried onto clips (src/recall/caption-track.ts; placement is barred
+  from it in timeline/placement/overlap.ts).
+- The Transitions and Adjustment placeholder tabs are hidden, and Captions
+  shows only for a host that supplies clip captions
+  (components/editor/panels/assets/assets-panel-store.tsx, tabbar.tsx, index.tsx).
+
+Recall-only files: src/recall/*, ../OpenCutEditor.tsx (host + layout, adapted
+from upstream's editor page), ../opencut.css, ../preflight.scoped.css,
+../editor-shell.css, ../shims/*.

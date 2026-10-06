@@ -2,7 +2,8 @@
 // Copyright (C) 2026 Brady Balk
 import { useEffect, useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { Check, Volume2, VolumeX } from "../lib/icons";
-import { useJobStore, type AccentTheme, type ExportLayout } from "../lib/store";
+import { useJobStore, type ExportLayout } from "../lib/store";
+import { ACCENT_PRESETS, accentHex, sameAccent, type AccentChoice } from "../theme/accent";
 
 type ButtonTone = "primary" | "secondary" | "ghost" | "success" | "danger";
 
@@ -21,18 +22,18 @@ export function StudioButton({
   success?: boolean;
   icon?: ReactNode;
 }) {
+  // The page kit's pill button: primary is the heat pill, danger is solid red.
+  const look = tone === "primary" ? "heat" : tone === "ghost" ? "ghost" : tone === "danger" ? "danger solid" : tone === "success" ? "is-keep" : "";
   return (
     <button
       type="button"
-      className={`studio-button tone-${tone} ${loading ? "is-loading" : ""} ${success ? "is-success" : ""} ${className}`.trim()}
+      className={`btn ${look} ${loading ? "is-loading" : ""} ${className}`.replace(/\s+/g, " ").trim()}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       {...props}
     >
-      <span className="studio-button-content">
-        {loading ? <span className="studio-button-spinner" aria-hidden="true" /> : success ? <StateIcon tone="success" icon={<Check size={14} />} /> : icon}
-        <span>{children}</span>
-      </span>
+      {loading ? <span className="btn-spinner" aria-hidden="true" /> : success ? <Check aria-hidden="true" /> : icon}
+      <span>{children}</span>
     </button>
   );
 }
@@ -184,15 +185,17 @@ export type ChoiceOption<T extends string> = { value: T; label: string; descript
 
 export function ChoiceCards<T extends string>({ value, options, onChange, label, compact = false, className = "" }: { value: T; options: ChoiceOption<T>[]; onChange: (value: T) => void; label: string; compact?: boolean; className?: string }) {
   return (
-    <div className={`studio-choice-cards ${compact ? "is-compact" : ""} ${className}`.trim()} role="radiogroup" aria-label={label}>
+    <div className={`optgrid choice-cards ${options.length > 2 ? "is-3" : ""} ${compact ? "is-compact" : ""} ${className}`.replace(/\s+/g, " ").trim()} role="radiogroup" aria-label={label}>
       {options.map((option) => {
         const selected = option.value === value;
         return (
-          <button type="button" role="radio" aria-checked={selected} key={option.value} className={selected ? "is-selected" : ""} onClick={() => onChange(option.value)}>
-            <span className="studio-choice-radio" aria-hidden="true"><i /></span>
-            {option.icon && <span className="studio-choice-icon" aria-hidden="true">{option.icon}</span>}
-            <span className="studio-choice-copy"><strong>{option.label}</strong><small>{option.description}</small></span>
-            {option.badge && <span className="studio-choice-badge">{option.badge}</span>}
+          <button type="button" role="radio" aria-checked={selected} key={option.value} className={`opt ${selected ? "on" : ""}`} onClick={() => onChange(option.value)}>
+            <b>
+              {option.icon && <span className="opt-icon" aria-hidden="true">{option.icon}</span>}
+              {option.label}
+              {option.badge && <span className={`badge ${option.badge === "Recommended" ? "heat" : ""}`}>{option.badge}</span>}
+            </b>
+            <small>{option.description}</small>
           </button>
         );
       })}
@@ -227,22 +230,17 @@ export function ThemeChoices({ value, onChange }: { value: "dark" | "light"; onC
   </div>;
 }
 
-const ACCENT_OPTIONS: { value: AccentTheme; label: string; color: string }[] = [
-  { value: "ember", label: "Ember", color: "#F08A5C" },
-  { value: "rose", label: "Rose", color: "#DB7D9B" },
-  { value: "violet", label: "Violet", color: "#A18AE0" },
-  { value: "crimson", label: "Crimson", color: "#DC746F" },
-  { value: "cobalt", label: "Cobalt", color: "#6F9BD8" },
-  { value: "sage", label: "Sage", color: "#7FA98E" },
-];
-
-/** Studio accent picker. Semantic success, warning, and danger colors are unchanged. */
-export function AccentChoices({ value, onChange }: { value: AccentTheme; onChange: (value: AccentTheme) => void }) {
-  return <div className="settings-accent-choices" role="radiogroup" aria-label="Studio color">
-    {ACCENT_OPTIONS.map((option) => <button type="button" role="radio" aria-checked={value === option.value} aria-label={option.label} title={option.label} key={option.value} className={value === option.value ? "is-selected" : ""} style={{ "--swatch": option.color } as CSSProperties} onClick={() => onChange(option.value)}>
-      <span className="settings-accent-swatch" aria-hidden="true"><i /></span>
-      <strong>{option.label}</strong>
-      <i className="settings-accent-check" aria-hidden="true"><Check size={10} /></i>
-    </button>)}
+/** Accent presets. The full color wheel lives in Settings > Look. Meaning colors never change. */
+export function AccentChoices({ value, onChange }: { value: AccentChoice; onChange: (value: AccentChoice) => void }) {
+  return <div className="settings-accent-choices" role="radiogroup" aria-label="Accent color">
+    {ACCENT_PRESETS.map((preset) => {
+      const selected = sameAccent(value, preset.accent);
+      const swatch = preset.accent ? accentHex(preset.accent) : "linear-gradient(135deg, #fff 50%, #111 50%)";
+      return <button type="button" role="radio" aria-checked={selected} aria-label={preset.label} title={preset.label} key={preset.id} className={selected ? "is-selected" : ""} style={{ "--swatch": swatch } as CSSProperties} onClick={() => onChange(preset.accent)}>
+        <span className="settings-accent-swatch" aria-hidden="true"><i /></span>
+        <strong>{preset.label}</strong>
+        <i className="settings-accent-check" aria-hidden="true"><Check size={10} /></i>
+      </button>;
+    })}
   </div>;
 }

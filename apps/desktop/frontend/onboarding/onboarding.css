@@ -1,0 +1,95 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* First run: full-window, opaque, with its own glow. Dark in both themes,
+   like Theater, so the first thing a creator sees is footage-first. */
+
+.onb {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  color: #fff;
+  font-family: var(--f-ui);
+  --t1: #fff; --t2: rgba(255,255,255,.72); --t3: rgba(255,255,255,.52); --t4: rgba(255,255,255,.3);
+  --fill: rgba(255,255,255,.07); --fill-2: rgba(255,255,255,.11); --fill-3: rgba(255,255,255,.16);
+  --stroke: rgba(255,255,255,.14); --stroke-2: rgba(255,255,255,.24);
+  --ink: #fff; --text-2: rgba(255,255,255,.72); --text-3: rgba(255,255,255,.52);
+  --panel: #111112; --elevated: #1A1A1C; --border: rgba(255,255,255,.09); --border-strong: rgba(255,255,255,.18);
+  --lg-button: linear-gradient(180deg, rgba(255,255,255,.13), rgba(255,255,255,.05));
+  --lg-button-bevel: inset 1px 1px 0 rgba(255,255,255,.3), inset -1px -1px 0 rgba(255,255,255,.06), 0 6px 18px rgba(0,0,0,.3);
+  --lg-selected: linear-gradient(180deg, rgba(255,255,255,.2), rgba(255,255,255,.08));
+  --lg-selected-bevel: inset 1px 1px 0 rgba(255,255,255,.4), inset -1px -1px 0 rgba(255,255,255,.08), 0 4px 12px rgba(0,0,0,.25);
+  --lg-bevel: inset 1px 1px 0 rgba(255,255,255,.34), inset -1px -1px 0 rgba(255,255,255,.07), inset 0 0 0 1px rgba(255,255,255,.08);
+  --lg-fill-card: linear-gradient(160deg, rgba(28,28,30,.72), rgba(16,16,18,.78));
+  --lg-drop: 0 18px 50px rgba(0,0,0,.45);
+  background: #000;
+  outline: none;
+}
+.onb.glow-opaque { background: #000; }
+:root[data-theme="light"][data-palette="mono"] .onb {
+  --h1: #fff; --h2: #E6E6E6; --h3: #fff; --heat-ink: #000;
+  --heat: linear-gradient(100deg, var(--h1) 0%, var(--h2) 55%, var(--h3) 100%);
+  --heat-glow: rgba(255,255,255,.16);
+}
+.onb .amb-grain { position: absolute; inset: 0; pointer-events: none; }
+.onb-brand { display: flex; align-items: center; gap: 10px; padding: 22px 32px 0; font-size: 18px; -webkit-app-region: drag; }
+.onb-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 64px;
+  align-items: center;
+  min-height: 0;
+  padding: 24px 88px;
+}
+.onb-l { display: grid; gap: 18px; justify-self: end; justify-items: start; width: min(560px, 100%); }
+.onb-l h1 { font-size: clamp(48px, 5.4vw, 92px); line-height: .94; }
+.onb-l p { font-size: 17px; line-height: 1.55; color: var(--t2); max-width: 42ch; }
+.o-kick { font-size: 13.5px; font-weight: 600; color: var(--t3); }
+.o-name { height: 58px; max-width: 420px; padding: 0 18px; font-size: 20px; }
+.onb-r { display: grid; place-items: center; min-width: 0; }
+.o-hero { color: #fff; filter: drop-shadow(0 0 60px rgba(255,255,255,.18)); }
+.o-av { display: grid; justify-items: center; gap: 14px; text-align: center; }
+.o-av .lav { box-shadow: 0 0 0 4px #000, 0 0 0 6px var(--stroke-2), 0 30px 80px rgba(0,0,0,.6); }
+.o-av b { font-size: 26px; }
+.o-hw { width: min(480px, 100%); }
+.o-look .accent { grid-template-columns: 200px minmax(0, 1fr); }
+.o-look .wheel { width: 200px; height: 200px; }
+.o-clip-opts { display: grid; gap: 14px; width: min(460px, 100%); }
+.o-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.o-toggle b { font-size: 14px; }
+
+/* a 9:16 frame that shows the chosen layout */
+.o-clip {
+  position: relative;
+  height: min(58vh, 540px);
+  aspect-ratio: 9 / 16;
+  border-radius: 22px;
+  overflow: hidden;
+  background: linear-gradient(160deg, #2a2a2e, #0c0c0e);
+  box-shadow: 0 30px 80px rgba(0,0,0,.6), 0 0 0 1px var(--stroke-2);
+}
+.o-frame { position: absolute; inset: 0; display: grid; }
+.o-frame i { display: block; }
+.o-frame .game { background: radial-gradient(80% 60% at 50% 60%, color-mix(in oklab, var(--h2) 40%, #334), #111); }
+.o-frame .cam { background: radial-gradient(40% 50% at 50% 55%, rgba(255,255,255,.35), rgba(255,255,255,.06)); }
+.o-frame.is-auto, .o-frame.is-vertical_split { grid-template-rows: 38% 62%; }
+.o-frame.is-gameplay_pip { grid-template-rows: 1fr; }
+.o-frame.is-gameplay_pip .game { grid-area: 1 / 1; }
+.o-frame.is-gameplay_pip .cam { grid-area: 1 / 1; width: 38%; height: 22%; margin: 8% 0 0 8%; border-radius: 12px; box-shadow: 0 0 0 2px rgba(255,255,255,.5); }
+.o-clip .cap { position: absolute; left: 8%; right: 8%; bottom: 24%; z-index: 2; text-align: center; font-size: 26px; color: #fff; text-shadow: 0 3px 0 #000, 0 0 14px rgba(0,0,0,.7); }
+.o-go { display: grid; gap: 12px; width: min(560px, 100%); justify-items: start; }
+.o-go .scanbar, .o-go .sbar-sub { width: 100%; }
+
+.onb-foot { display: flex; align-items: center; gap: 12px; padding: 18px 32px 28px; border-top: 1px solid var(--stroke); }
+.onb-foot .sp { flex: 1; }
+.onb-count { font-size: 13px; margin-left: 6px; }
+.onb-steps { display: flex; gap: 6px; }
+.onb-steps span { width: 28px; height: 4px; border-radius: 2px; background: var(--fill-3); transition: width var(--dur-3) var(--ease-out), background-color var(--dur-3) ease; }
+.onb-steps span.on { width: 48px; background: var(--t1); }
+.onb-steps span.done { background: var(--t3); }
+.onb .btn:disabled { opacity: .35; }
+
+@media (max-width: 1100px) {
+  .onb-main { grid-template-columns: minmax(0, 1fr); gap: 28px; padding: 24px 32px; overflow-y: auto; }
+  .onb-l { justify-self: start; }
+}

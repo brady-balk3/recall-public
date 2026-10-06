@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import math
 import logging
 import os
+import re
 import shutil
 import threading
 import time
@@ -144,6 +146,31 @@ def _twitch_vod_started_at(source_path: str) -> Optional[str]:
     return (meta or {}).get("created_at") or None
 
 
+
+def _probe_local_video(path: str) -> "tuple[float, bool]":
+    """(duration in seconds, has a video stream) for a local file, via ffmpeg."""
+    import re as _re
+    import shutil as _shutil
+    import subprocess as _subprocess
+    from core.ffmpeg_path import get_ffmpeg_path
+
+    ffmpeg = get_ffmpeg_path()
+    if ffmpeg == "ffmpeg":
+        ffmpeg = _shutil.which("ffmpeg") or ffmpeg
+    try:
+        proc = _subprocess.run(
+            [ffmpeg, "-hide_banner", "-i", path],
+            capture_output=True, text=True, timeout=30,
+            creationflags=getattr(_subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, _subprocess.SubprocessError):
+        return 0.0, False
+    err = proc.stderr or ""
+    match = _re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", err)
+    duration = (int(match.group(1)) * 3600 + int(match.group(2)) * 60 + float(match.group(3))) if match else 0.0
+    has_video = bool(_re.search(r"Stream #\S+.*Video:", err))
+    return duration, has_video and duration > 0
+
 class JobService:
     def __init__(
         self,
@@ -237,6 +264,64 @@ class JobService:
         self.job_manager.start_job(job_id, settings=settings)
         return {"job_id": job_id, "status": "started"}
 
+    def open_local(self, source_path: str, session_name: Optional[str] = None) -> Dict[str, Any]:
+        """Open a video from this PC for editing, without scanning it.
+
+        The Cutting Room edits any local video (a Fortnite recording, a VOD)
+        straight away: the job is registered and marked ready with its real
+        duration, so it streams, shows in the Library, and renders clips like
+        a scanned stream. Scanning it for moments is a separate, optional step
+        (``scan_existing``), so opening a clip never loads the scan's models.
+        """
+        path = os.path.abspath(str(source_path or ""))
+        if not source_path or not os.path.isfile(path):
+            raise HTTPException(status_code=404, detail="That video isn't on this PC anymore.")
+        # The same recording opened (or dropped into the editor) again is the
+        # same video: reuse its job so its clips stay together in one place.
+        with self.db.get_connection() as conn:
+            existing = conn.cursor().execute(
+                "SELECT id, duration, status FROM jobs WHERE source_type = 'file' AND source_path = ? "
+                "AND status != 'failed' ORDER BY created_at DESC LIMIT 1",
+                (path,),
+            ).fetchone()
+        if existing:
+            return {"job_id": existing["id"], "duration": float(existing["duration"] or 0.0), "scanned": None, "reused": True}
+        duration, has_video = _probe_local_video(path)
+        if not has_video:
+            raise HTTPException(status_code=422, detail="That file doesn't have a video Recall can read.")
+        from core.source_date import local_recording_date
+
+        name = (session_name or "").strip() or os.path.splitext(os.path.basename(path))[0]
+        job_id = self.job_manager.create_job(path, "file", name[:200], local_recording_date(path))
+        with self.db.get_connection() as conn:
+            conn.cursor().execute(
+                "UPDATE jobs SET status = 'completed', asset_path = ?, duration = ?, "
+                "current_stage = 'Ready', message = 'Opened for editing. Not scanned.', "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (path, duration, job_id),
+            )
+        return {"job_id": job_id, "duration": duration, "scanned": False}
+
+    def scan_existing(self, job_id: str, settings: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+        """Scan a video that was opened without a scan, on the same job.
+
+        Its session keeps its id, and clips the creator already made stay: a
+        scan only adds the moments it finds.
+        """
+        if has_active_source_restores():
+            raise HTTPException(
+                status_code=409,
+                detail="Wait for source preparation to finish or cancel it before starting a scan.",
+            )
+        job = self.job_manager.get_job(job_id, include_events=False)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if self.job_manager.is_active(job_id):
+            raise HTTPException(status_code=409, detail="This video is already being scanned.")
+        self._retained_source(job_id)  # 404s when the file has gone
+        self.job_manager.start_job(job_id, settings=dict(settings or {}))
+        return {"job_id": job_id, "status": "started"}
+
     def download(self, request: Any) -> Dict[str, str]:
         if has_active_source_restores():
             raise HTTPException(
@@ -265,12 +350,17 @@ class JobService:
         job = self.job_manager.get_job(job_id, include_events=False)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
+        from core.diagnostics import JUDGE_HEALTH_EVENTS
+
         text = support_report(
             job,
             self.job_manager.get_job_events(job_id, limit=60),
             packaged=is_frozen(),
             cpu_count=os.cpu_count(),
             ram_gb=available_memory_gb(),
+            health_events=self.job_manager.get_job_events(
+                job_id, limit=10, event_types=list(JUDGE_HEALTH_EVENTS),
+            ),
         )
         return {
             "job_id": job_id,  # Local API routing only; excluded from exported text/name.
@@ -365,23 +455,17 @@ class JobService:
     def timeline(self, job_id: str) -> Dict[str, Any]:
         return {"job_id": job_id, "timeline": self.db.get_reaction_timeline(job_id)}
 
-    def source_media(self, job_id: str):
-        """The job's full source VOD as a seekable FileResponse (Cutting Room).
+    def _retained_source(self, job_id: str) -> tuple[str, float]:
+        """The job's source VOD on disk and its duration in seconds.
 
         asset_path is the pipeline-resolved local video (set for both local
         and downloaded sources once a scan has run); source_path is the
         fallback for local-file jobs whose asset_path was never written or
-        was cleared by "clear downloaded VODs". Starlette's FileResponse
-        implements single- and multi-range requests, so no custom Range
-        handling is needed here.
+        was cleared by "clear downloaded VODs".
         """
-        import mimetypes
-
-        from fastapi.responses import FileResponse
-
         with self.db.get_connection() as conn:
             row = conn.cursor().execute(
-                "SELECT asset_path, source_path, source_type FROM jobs WHERE id = ?",
+                "SELECT asset_path, source_path, source_type, duration FROM jobs WHERE id = ?",
                 (job_id,),
             ).fetchone()
         if not row:
@@ -395,8 +479,68 @@ class JobService:
                 status_code=404,
                 detail="The source recording for this session is no longer on disk.",
             )
+        return path, max(0.0, float(row["duration"] or 0.0))
+
+    def source_media(self, job_id: str):
+        """The job's full source VOD as a seekable FileResponse.
+
+        Starlette's FileResponse implements single- and multi-range requests,
+        so no custom Range handling is needed here.
+        """
+        import mimetypes
+
+        from fastapi.responses import FileResponse
+
+        path, _duration = self._retained_source(job_id)
         media_type = mimetypes.guess_type(path)[0] or "video/mp4"
         return FileResponse(path, media_type=media_type)
+
+    def frame_jpeg(self, job_id: str, at: float, width: int = 1280) -> bytes:
+        """One full frame of the source at ``at`` seconds, as JPEG bytes.
+
+        The Cutting Room previews the finished 9:16 clip, so the facecam is
+        drawn on this: the whole landscape frame under the playhead.
+        """
+        import subprocess
+
+        from core.ffmpeg_path import get_ffmpeg_path
+
+        path, duration = self._retained_source(job_id)
+        at = max(0.0, float(at))
+        if duration > 0:
+            at = min(at, max(0.0, duration - 0.1))
+        width = max(320, min(1920, int(width)))
+        width -= width % 2
+        result = subprocess.run(
+            [get_ffmpeg_path(), "-v", "error", "-ss", f"{at:.3f}", "-i", path, "-frames:v", "1",
+             "-vf", f"scale={width}:-2", "-q:v", "3", "-f", "image2", "-c:v", "mjpeg", "pipe:1"],
+            capture_output=True, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode != 0 or not result.stdout:
+            raise HTTPException(status_code=500, detail="Recall couldn't read a frame from this video.")
+        return result.stdout
+
+    def waveform_path(self, job_id: str) -> str:
+        """Waveform peaks for the whole source VOD (core/waveform_peaks.py).
+
+        Built once per source file with a streaming ffmpeg decode (about 25 s
+        for a four-hour VOD) and cached; the key includes the file's size and
+        mtime, so a replaced VOD never reuses stale peaks.
+        """
+        import hashlib
+
+        from core.waveform_peaks import build_waveform_peaks
+
+        source, _duration = self._retained_source(job_id)
+        stat = os.stat(source)
+        seed = "|".join((os.path.abspath(source), str(stat.st_size), str(stat.st_mtime_ns), "rwf2"))
+        digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:24]  # nosec B324
+        out_path = os.path.join(get_data_dir(), "cache", "waveforms", f"waveform_{digest}.rwf")
+        made = build_waveform_peaks(source, out_path)
+        if not made:
+            raise HTTPException(status_code=404, detail="This recording has no audio to draw.")
+        return made
 
     def filmstrip_path(
         self,
@@ -420,26 +564,7 @@ class JobService:
 
         from core.thumbnails import generate_filmstrip
 
-        with self.db.get_connection() as conn:
-            row = conn.cursor().execute(
-                "SELECT asset_path, source_path, source_type, duration "
-                "FROM jobs WHERE id = ?",
-                (job_id,),
-            ).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Job not found")
-
-        candidates = [row["asset_path"]]
-        if (row["source_type"] or "file") == "file":
-            candidates.append(row["source_path"])
-        source = next((path for path in candidates if path and os.path.isfile(path)), None)
-        if not source:
-            raise HTTPException(
-                status_code=404,
-                detail="The source recording for this session is no longer on disk.",
-            )
-
-        duration = max(0.0, float(row["duration"] or 0.0))
+        source, duration = self._retained_source(job_id)
         try:
             range_start = max(0.0, float(start))
             range_end = float(end) if end is not None else duration
@@ -811,11 +936,9 @@ class ClipService:
             ),
         )
 
-    def _layout_from_meta(self, clip_id: str, export_path: Optional[str] = None) -> Dict[str, Any]:
-        """The clip's saved export layout from its ``*_meta.json`` sidecar,
-        defaulting to vertical_split. Also checks the meta keyed on the export
-        filename stem (older clips wrote it that way)."""
-        layout = {"type": "vertical_split"}
+    def _render_meta(self, clip_id: str, export_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """The clip's ``*_meta.json`` render sidecar, or None. Also checks the
+        meta keyed on the export filename stem (older clips wrote it that way)."""
         candidates = [os.path.join(self.exports_dir, f"clip_{clip_id}_meta.json")]
         if export_path:
             stem = os.path.splitext(os.path.basename(export_path))[0]
@@ -824,10 +947,31 @@ class ClipService:
             if os.path.exists(meta_path):
                 try:
                     with open(meta_path, "r", encoding="utf-8") as f:
-                        return json.load(f).get("layout", layout)
+                        meta = json.load(f)
+                    if isinstance(meta, dict):
+                        return meta
                 except Exception:
-                    logger.debug("Could not read clip layout metadata %s", meta_path, exc_info=True)
-                    continue
+                    logger.debug("Could not read clip render metadata %s", meta_path, exc_info=True)
+        return None
+
+    def render_info(self, clip_id: str) -> Dict[str, Any]:
+        """What the clip's current render carries. ``captions_burned`` is None
+        for renders made before Recall started recording it."""
+        with self.db.get_connection() as conn:
+            row = conn.cursor().execute("SELECT export_path FROM clips WHERE id = ?", (clip_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Clip not found")
+        meta = self._render_meta(clip_id, row["export_path"]) or {}
+        burned = meta.get("captions_burned")
+        return {"clip_id": clip_id, "captions_burned": burned if isinstance(burned, bool) else None}
+
+    def _layout_from_meta(self, clip_id: str, export_path: Optional[str] = None) -> Dict[str, Any]:
+        """The clip's saved export layout from its ``*_meta.json`` sidecar,
+        defaulting to vertical_split."""
+        layout = {"type": "vertical_split"}
+        meta = self._render_meta(clip_id, export_path)
+        if meta is not None:
+            return meta.get("layout", layout)
         # New scans persist layout directly with the clip so re-editing remains
         # deterministic even if an export sidecar was moved or cleaned up.
         try:
@@ -1171,8 +1315,13 @@ class ClipService:
             row = by_id.get(clip_id)
             clip_duration = duration_by_id.get(clip_id, 1.0)
             src = row["export_path"] if row else None
+            # A cut the creator finished in the in-app editor is what they meant
+            # to post; it wins over Recall's render and needs no render pass.
+            edited = self._edited_video_path(clip_id) if row else None
+            if edited:
+                src = edited
             needs_render = bool(
-                row and (not src or not os.path.exists(src) or row["preview_only"])
+                row and not edited and (not src or not os.path.exists(src) or row["preview_only"])
             )
             starting_progress = completed_work / total_work
             report(
@@ -2094,6 +2243,120 @@ class ClipService:
                 raise HTTPException(status_code=404, detail="Clip not found")
         return annotate_clip_rows(self.db, [dict(row)])[0]
 
+    EDITED_VIDEO_MAX_BYTES = 4 * 1024 ** 3
+
+    @staticmethod
+    def edited_video_name(clip_id: str) -> str:
+        """The editor's cut of a clip lives beside Recall's render, never over it:
+        a caption fix or re-render replaces the render and leaves the edit alone."""
+        from core.clip_media import edited_video_name
+
+        name = edited_video_name(clip_id)
+        if not name:
+            raise HTTPException(status_code=400, detail="Bad clip id")
+        return name
+
+    @staticmethod
+    def clean_video_name(clip_id: str) -> str:
+        safe = re.sub(r"[^A-Za-z0-9_-]", "", clip_id)
+        if not safe:
+            raise HTTPException(status_code=400, detail="Bad clip id")
+        return f"clean_{safe}.mp4"
+
+    @serialized_clip_operation
+    def render_clean_video(self, clip_id: str) -> Dict[str, Any]:
+        """Render this clip exactly as Recall frames it, minus burned-in captions.
+
+        The in-app editor swaps this in when a creator wants to restyle the
+        captions as editable text, so the old words aren't baked in underneath.
+        Rendered into a private staging folder and moved to clean_<id>.mp4:
+        Recall's own render, its metadata sidecar and its poster are untouched.
+        """
+        from core.models.clip import GameClip
+        from engines.export.renderer import render_clip
+
+        with self.db.get_connection() as conn:
+            clip_row = conn.cursor().execute("SELECT * FROM clips WHERE id = ?", (clip_id,)).fetchone()
+            if not clip_row:
+                raise HTTPException(status_code=404, detail="Clip not found")
+            job_row = conn.cursor().execute(
+                "SELECT source_path, asset_path, source_type, duration FROM jobs WHERE id = ?",
+                (clip_row["job_id"],),
+            ).fetchone()
+        if not job_row:
+            raise HTTPException(status_code=404, detail="Job associated with clip not found")
+        name = self.clean_video_name(clip_id)
+        start = float(clip_row["start_time"] or 0.0)
+        end = float(clip_row["end_time"] or 0.0)
+        staging = os.path.join(self.exports_dir, f".clean-{uuid.uuid4().hex}")
+        try:
+            with source_in_use(self.db, clip_row["job_id"]):
+                video_path = self._local_source_video(job_row)
+                clip = GameClip(
+                    clip_id=clip_row["id"],
+                    start=start,
+                    end=end,
+                    story_id=clip_row["story_label"] or "",
+                    score=clip_row["score"] or 0.8,
+                    layout=self._layout_from_meta(clip_row["id"], clip_row["export_path"]),
+                )
+                rendered = render_clip(video_path=video_path, clip=clip, output_dir=staging, ass_path=None)
+            os.replace(rendered, os.path.join(self.exports_dir, name))
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        path = os.path.join(self.exports_dir, name)
+        return {"clip_id": clip_id, "filename": name, "bytes": os.path.getsize(path)}
+
+    def _edited_video_path(self, clip_id: str) -> Optional[str]:
+        """The saved editor cut for this clip, or None."""
+        try:
+            path = os.path.join(self.exports_dir, self.edited_video_name(clip_id))
+        except HTTPException:
+            return None
+        return path if os.path.isfile(path) else None
+
+    def _require_clip(self, clip_id: str) -> None:
+        with self.db.get_connection() as conn:
+            row = conn.cursor().execute("SELECT id FROM clips WHERE id = ?", (clip_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Clip not found")
+
+    def save_edited_video(self, clip_id: str, upload_path: str) -> Dict[str, Any]:
+        """Keep the MP4 the in-app editor exported for this clip.
+
+        ``upload_path`` is a finished temp file inside the exports folder; it is
+        checked for an MP4 header and moved into place atomically, so a failed
+        or half-sent upload never replaces a good edit.
+        """
+        try:
+            self._require_clip(clip_id)
+            name = self.edited_video_name(clip_id)
+            with open(upload_path, "rb") as handle:
+                head = handle.read(12)
+            if len(head) < 12 or head[4:8] != b"ftyp":
+                raise HTTPException(status_code=400, detail="That isn't an MP4 file")
+            os.replace(upload_path, os.path.join(self.exports_dir, name))
+        finally:
+            if os.path.exists(upload_path):
+                os.remove(upload_path)
+        path = os.path.join(self.exports_dir, name)
+        return {"clip_id": clip_id, "filename": name, "bytes": os.path.getsize(path)}
+
+    def edited_video(self, clip_id: str) -> Dict[str, Any]:
+        self._require_clip(clip_id)
+        name = self.edited_video_name(clip_id)
+        path = os.path.join(self.exports_dir, name)
+        if not os.path.isfile(path):
+            return {"clip_id": clip_id, "filename": None}
+        return {"clip_id": clip_id, "filename": name, "bytes": os.path.getsize(path)}
+
+    def delete_edited_video(self, clip_id: str) -> Dict[str, Any]:
+        self._require_clip(clip_id)
+        path = os.path.join(self.exports_dir, self.edited_video_name(clip_id))
+        if os.path.isfile(path):
+            os.remove(path)
+        return {"clip_id": clip_id, "filename": None}
+
     def prepare_preview(self, clip_id: str, force: bool = False) -> Dict[str, Any]:
         """Render the framed vertical preview for a Second-look clip.
 
@@ -2254,6 +2517,14 @@ class ClipService:
             clip_row = cursor.fetchone()
             if not clip_row:
                 raise HTTPException(status_code=404, detail="Clip not found")
+        # A caption fixed in the Cutting Room rides along with a re-cut: it is
+        # recorded against the NEW window, or the render would hold it back as
+        # stale and burn in the machine words instead.
+        caption_text = str(getattr(request, "caption_text", "") or "").strip()
+        if caption_text:
+            self._record_requested_caption(
+                clip_id, clip_row["job_id"], float(request.start_time), float(request.end_time), caption_text,
+            )
         try:
             rendered_path, thumb_path = self._render_existing_clip(
                 clip_row, request.start_time, request.end_time,
@@ -2669,7 +2940,9 @@ class ClipService:
                 else "Stacked facecam"
             )
             reason = (
-                "Recall matched the facecam and gameplay regions detected for "
+                "Using the facecam you drew for this clip."
+                if evidence_source == "manual"
+                else "Recall matched the facecam and gameplay regions detected for "
                 "this part of the VOD."
             )
         else:
@@ -2690,6 +2963,7 @@ class ClipService:
         *,
         requested_layout: str = "auto",
         focus_x: float = 0.5,
+        facecam_override: Optional[List[float]] = None,
         _job_row: Any = None,
     ) -> Dict[str, Any]:
         """Resolve a VOD Editor selection through Recall's scan-time model.
@@ -2697,6 +2971,11 @@ class ClipService:
         New scans persist the actual facecam and authored-gameplay timelines.
         Sessions made before that migration fall back to the closest automatic
         clip's saved geometry instead of the old generic stacked crop.
+
+        ``facecam_override`` is a box the creator drew. It replaces the
+        detected facecam; the scan's ``subject_top`` measured a different
+        plate, so it is dropped and the portrait crop falls back to its default.
+        An explicit "full_gameplay" request still wins over a drawn box.
         """
         from engines.clip.layout import assign_layout
 
@@ -2723,6 +3002,18 @@ class ClipService:
         requested = requested_layout if requested_layout in {
             "auto", "vertical_split", "gameplay_pip", "full_gameplay",
         } else "auto"
+        manual_box = (
+            [float(v) for v in facecam_override]
+            if facecam_override and requested != "full_gameplay"
+            else None
+        )
+        if manual_box:
+            facecam_box = manual_box
+            facecam_subject_top = None
+            evidence_source = "manual"
+            if requested == "auto" and resolved_auto not in {"vertical_split", "gameplay_pip"}:
+                # Drawing a facecam is a request for a facecam composition.
+                resolved_auto = "vertical_split"
         layout_type = resolved_auto if requested == "auto" else requested
         if layout_type == "full_gameplay":
             facecam_box = None
@@ -2744,7 +3035,7 @@ class ClipService:
             camera_focus_x=camera_focus_x,
             facecam_subject_top=facecam_subject_top,
         )
-        if requested == "auto" and resolved.get("facecam") and model:
+        if requested == "auto" and model and not manual_box:
             from engines.vision import vtuber as vtuber_mod
 
             overlay = vtuber_mod.overlay_for_facecam(
@@ -2797,6 +3088,7 @@ class ClipService:
             end,
             requested_layout=getattr(request, "layout", "auto") or "auto",
             focus_x=float(0.5 if raw_focus is None else raw_focus),
+            facecam_override=getattr(request, "facecam_override", None),
         )
         return job_row, video_path, start, end, center, layout
 
@@ -2923,6 +3215,9 @@ class ClipService:
         is_library_clip = origin != "compilation"
 
         captions_enabled = getattr(request, "captions_enabled", None)
+        caption_text = str(getattr(request, "caption_text", "") or "").strip()
+        if caption_text and captions_enabled is not False:
+            self._record_requested_caption(clip_id, job_id, start, end, caption_text)
         ass_path = self._regenerate_ass_if_possible(
             video_path, clip_id, start, end,
             enabled_override=captions_enabled,
@@ -3197,6 +3492,77 @@ class ClipService:
         return words
 
     CAPTION_EDIT_WINDOW_TOLERANCE = 0.05
+
+    # Short-window decodes the Cutting Room asked for, so making the clip
+    # right after doesn't decode the same seconds twice.
+    _WINDOW_WORDS_KEEP = 32
+
+    def window_caption_words(self, job_id: str, start: float, end: float,
+                             decode: bool = False) -> Dict[str, Any]:
+        """The words a clip of [start, end] would burn in, clip-relative.
+
+        Same order as a render: the scan's own transcript first; a short-window
+        decode only when the scan has no words there, and only when asked
+        (``decode``), because it loads the ASR model. ``source`` says which:
+        "scan", "decode", or "none" (nothing read yet, or nothing heard).
+        """
+        from engines.caption.whisper_asr import slice_transcript_words, transcribe_clip_window
+
+        if not (math.isfinite(start) and math.isfinite(end)) or end <= start or end - start > 180:
+            raise HTTPException(status_code=422, detail="Caption windows must be 0-3 min.")
+        with self.db.get_connection() as conn:
+            job_row = conn.cursor().execute(
+                "SELECT source_path, asset_path, source_type, duration FROM jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+        if not job_row:
+            raise HTTPException(status_code=404, detail="Session not found")
+        with source_in_use(self.db, job_id):
+            video_path = self._local_source_video(job_row)
+            audio_key = self._caption_audio_cache_key(video_path)
+            transcript = self._load_caption_transcript(audio_key) if audio_key else None
+            if transcript:
+                words = slice_transcript_words(transcript, start, end)
+                if words:
+                    return {"source": "scan", "words": words}
+            cache = self.__dict__.setdefault("_window_words", {})
+            key = (job_id, round(float(start), 2), round(float(end), 2))
+            if key in cache:
+                return {"source": "decode", "words": cache[key]}
+            if not decode:
+                return {"source": "none", "words": []}
+            temp_dir = os.path.join(self.data_root, "temp")
+            os.makedirs(temp_dir, exist_ok=True)
+            proc_mode = self.db.get_setting("processingMode", None)
+            transcript = transcribe_clip_window(
+                video_path, start, end,
+                os.path.join(temp_dir, f"caption_window_{uuid.uuid4().hex[:8]}.wav"),
+                settings={"processingMode": proc_mode} if proc_mode else None,
+            )
+        words: List[Dict] = []
+        for segment in transcript.get("segments", []) or []:
+            words.extend(segment.get("words") or [])
+        cache[key] = words
+        while len(cache) > self._WINDOW_WORDS_KEEP:
+            cache.pop(next(iter(cache)))
+        return {"source": "decode", "words": words}
+
+    def _record_requested_caption(self, clip_id: str, job_id: str, start: float,
+                                  end: float, text: str) -> None:
+        """A caption the creator corrected before the clip existed (Cutting Room).
+
+        Stored as an ordinary correction, re-timed onto the words this window
+        renders from, so the first render already carries it.
+        """
+        from engines.caption.caption_edits import retime_edited_words, words_to_text
+
+        machine = self.window_caption_words(job_id, start, end, decode=True)["words"]
+        if not machine:
+            return
+        words = retime_edited_words(machine, text)
+        if words:
+            self.db.record_caption_edit(clip_id, job_id, start, end, words,
+                                        machine_text=words_to_text(machine))
 
     def _corrected_caption_ass(
         self,

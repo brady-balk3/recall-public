@@ -600,7 +600,7 @@ class CompilationProjectService:
                           j.session_name, j.source_date, j.created_at,
                           COALESCE(
                             (SELECT source_key FROM source_asset_sessions
-                             WHERE job_id = j.id ORDER BY created_at DESC LIMIT 1),
+                             WHERE job_id = j.id ORDER BY linked_at DESC LIMIT 1),
                             NULLIF(j.source_path, ''), j.id
                           ) AS diversity_key
                    FROM clips AS c
@@ -1138,7 +1138,7 @@ class CompilationProjectService:
                           j.session_name, j.source_date, j.created_at, j.source_path,
                           COALESCE(
                             (SELECT source_key FROM source_asset_sessions
-                             WHERE job_id = j.id ORDER BY created_at DESC LIMIT 1),
+                             WHERE job_id = j.id ORDER BY linked_at DESC LIMIT 1),
                             NULLIF(j.source_path, ''), j.id
                           ) AS diversity_key
                    FROM clips AS c

@@ -1,0 +1,291 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Review index, plus the new-material pass over the shipped deck and Theater. */
+
+.decks { display: grid; gap: 14px; }
+.deck {
+  display: grid;
+  grid-template-columns: clamp(220px, 20vw, 360px) minmax(0, 1fr) auto;
+  gap: 28px;
+  align-items: center;
+  padding: 16px 20px 16px 16px;
+  border-radius: 26px;
+}
+.deck-poster {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #141414;
+  cursor: pointer;
+  transition: transform var(--dur-2) var(--ease-out);
+}
+.deck-poster:active { transform: scale(.98); }
+.deck-poster > img, .deck-poster > video, .deck-poster > span { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.deck-poster::after { content: ""; position: absolute; inset: 0; background: linear-gradient(transparent 55%, rgba(0, 0, 0, .55)); pointer-events: none; }
+.deck-poster .curve { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 30px; z-index: 1; }
+.deck-copy { display: grid; gap: 10px; min-width: 0; justify-items: start; }
+.deck-copy h2 { font-size: clamp(24px, 1.8vw, 36px); line-height: 1.05; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deck-meta { font-size: 13.5px; }
+.deck-progress { display: flex; align-items: center; gap: 12px; width: 100%; font-size: 12.5px; }
+.deck-bar { flex: 0 1 280px; height: 4px; border-radius: 2px; background: var(--fill-2); overflow: hidden; }
+.deck-bar i { display: block; height: 100%; background: var(--heat); transform-origin: left center; }
+.deck-cta { display: flex; gap: 8px; margin-top: 4px; }
+.deck-thumbs { display: flex; gap: 8px; }
+.deck-thumb {
+  position: relative;
+  width: clamp(64px, 5vw, 96px);
+  aspect-ratio: 9 / 16;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #111;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .08);
+  transition: transform var(--dur-2) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) { .deck-thumb:hover { transform: translateY(-3px); } }
+.deck-thumb .rl-hype { top: 6px; right: 6px; min-width: 26px; height: 20px; font-size: 10.5px; }
+
+.rv-lower { display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 24%, 420px); gap: 24px; align-items: start; }
+.rv-lower .sec-t { margin-top: 48px; }
+.taste { display: grid; gap: 14px; margin-top: 48px; padding: 20px 22px; border-radius: 24px; }
+.taste > b { font-size: 15px; }
+.taste p { font-size: 13.5px; line-height: 1.5; }
+.taste .btn { justify-self: start; }
+.review-index .lrows { margin-top: 4px; }
+
+@media (max-width: 1400px) {
+  .deck { grid-template-columns: 220px minmax(0, 1fr); }
+  .deck-thumbs { display: none; }
+  .rv-lower { grid-template-columns: minmax(0, 1fr); }
+  .taste { margin-top: 0; }
+}
+
+/* ── the shipped deck grid and Theater, on the new material ── */
+#view-review .rev-card { border-radius: 20px; }
+
+/* Theater is a full-window view: it covers the sidebar and carries its own
+   footage backdrop. The window controls stay on top. */
+#view-theater.active {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  padding: 0;
+  background: var(--bg);
+}
+#view-theater .review-theater-screen { grid-template-rows: 76px minmax(0, 1fr) 118px; }
+.shell-win { z-index: 50; }
+
+/* top bar: one floating glass pill */
+#view-theater .theater-top {
+  align-self: center;
+  justify-self: center;
+  width: min(1180px, calc(100% - 340px));
+  height: 52px;
+  margin-top: 12px;
+  padding: 0 10px 0 16px;
+  gap: 14px;
+  border-radius: 26px;
+  color: #fff;
+  background-image:
+    radial-gradient(360px circle at var(--mx, -400px) var(--my, -400px), rgba(255, 255, 255, .11), transparent 45%),
+    linear-gradient(160deg, rgba(255,255,255,.10) 0%, rgba(255,255,255,.035) 45%, rgba(255,255,255,.055) 100%);
+  -webkit-backdrop-filter: blur(16px) saturate(1.9);
+  backdrop-filter: url(#lg-lens) blur(6px) saturate(2) brightness(1.08);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.42), inset 1px 0 0 rgba(255,255,255,.12), inset -1px -1px 0 rgba(255,255,255,.06), 0 24px 60px rgba(0,0,0,.5);
+  -webkit-app-region: drag;
+}
+#view-theater .theater-top > *,
+#view-theater .theater-top button { -webkit-app-region: no-drag; }
+#view-theater .theater-back { color: rgba(255, 255, 255, .78); font-weight: 600; }
+#view-theater .theater-back:hover { color: #fff; }
+
+/* left column */
+.theater-rank-row { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+.theater-rank { font-size: 64px; line-height: .9; color: #fff; }
+.theater-rank-row .theater-editorial-row { flex: 1; min-width: 0; padding-top: 6px; }
+.hype-card,
+.coach {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  color: #fff;
+  background: linear-gradient(160deg, rgba(28, 28, 30, .72), rgba(16, 16, 18, .78));
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, .14), inset 0 0 0 1px rgba(255, 255, 255, .06);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  backdrop-filter: blur(20px) saturate(1.5);
+}
+.hype-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; color: rgba(255, 255, 255, .62); }
+.hype-h span b { color: #fff; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.hype-h > b { font-size: 32px; line-height: 1; color: #fff; }
+.hype-bar { display: grid; grid-template-columns: repeat(20, 1fr); gap: 3px; }
+.hype-bar i { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, .14); }
+.hype-bar i.on { background: var(--heat); }
+:root[data-palette="mono"] .hype-bar i.on { background: #fff; }
+.coach-h { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; color: rgba(255, 255, 255, .62); }
+.coach-row { display: flex; align-items: center; gap: 14px; }
+.coach-row b.disp { display: block; font-size: 20px; color: #fff; }
+.coach-row small { font-size: 12.5px; color: rgba(255, 255, 255, .62); }
+.coach-ring { position: relative; display: grid; place-items: center; width: 46px; height: 46px; }
+.coach-ring svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+.coach-ring circle { fill: none; stroke-width: 3.5; }
+.coach-ring .bg { stroke: rgba(255, 255, 255, .14); }
+.coach-ring .fg { stroke: var(--h2); stroke-linecap: round; }
+:root[data-palette="mono"] .coach-ring .fg { stroke: #fff; }
+.coach-ring b { font-size: 14px; color: #fff; }
+.coach p { font-size: 13.5px; line-height: 1.45; color: rgba(255, 255, 255, .82); }
+
+/* decisions: a floating glass stack, Keep is the loud one */
+#view-theater .theater-actions {
+  align-items: stretch;
+  gap: 8px;
+  width: 188px;
+  margin-left: 30px;
+  padding: 8px;
+  border-radius: 24px;
+}
+#view-theater .theater-actions button {
+  width: auto;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px 0 18px;
+  border: 0;
+  border-radius: 16px;
+  color: #fff;
+  font-size: 22px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .04));
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, .28), inset -1px -1px 0 rgba(255, 255, 255, .05);
+  transition: filter var(--dur-1) ease, transform var(--dur-1) var(--ease-out);
+}
+#view-theater .theater-actions button span { flex: 1; color: inherit; font-size: inherit; text-align: left; font-weight: 700; letter-spacing: -.03em; }
+#view-theater .theater-actions button:hover { filter: brightness(1.15); transform: none; }
+#view-theater .theater-actions button:active { transform: scale(.97); }
+#view-theater .theater-actions button svg { width: 22px; height: 22px; }
+#view-theater .theater-actions kbd { font: 600 10.5px var(--f-ui); padding: 3px 7px; border-radius: 6px; background: rgba(0, 0, 0, .25); color: inherit; opacity: .75; }
+#view-theater .theater-actions .theater-keep {
+  height: 64px;
+  font-size: 30px;
+  color: var(--heat-ink);
+  background: linear-gradient(180deg, rgba(255,255,255,.4) 0%, rgba(255,255,255,.06) 50%, rgba(255,255,255,0) 54%), var(--heat);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.65), inset 0 -3px 10px rgba(0,0,0,.18), 0 16px 40px -10px var(--heat-glow);
+}
+#view-theater .theater-actions .theater-keep kbd { background: rgba(0, 0, 0, .12); }
+
+/* up next: a glass dock */
+#view-theater .theater-next {
+  align-self: center;
+  justify-self: center;
+  width: min(1180px, calc(100% - 340px));
+  margin-bottom: 14px;
+  padding: 10px 16px;
+  border-radius: 24px;
+  color: #fff;
+  background: linear-gradient(160deg, rgba(255,255,255,.10) 0%, rgba(255,255,255,.035) 45%, rgba(255,255,255,.055) 100%);
+  -webkit-backdrop-filter: blur(16px) saturate(1.9);
+  backdrop-filter: url(#lg-lens) blur(6px) saturate(2) brightness(1.08);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.42), inset -1px -1px 0 rgba(255,255,255,.06), 0 24px 60px rgba(0,0,0,.5);
+}
+@media (prefers-reduced-motion: reduce) {
+  #view-theater .theater-actions button:active { transform: none; }
+}
+
+/* Theater is a cinema: dark in both themes (custom properties resolve where
+   they're declared, so the bridge names are re-declared here too). */
+#view-theater {
+  color-scheme: dark;
+  --bg: #000;
+  --t1: #fff;
+  --t2: rgba(255, 255, 255, .72);
+  --t3: rgba(255, 255, 255, .52);
+  --t4: rgba(255, 255, 255, .3);
+  --fill: rgba(255, 255, 255, .07);
+  --fill-2: rgba(255, 255, 255, .11);
+  --fill-3: rgba(255, 255, 255, .16);
+  --stroke: rgba(255, 255, 255, .14);
+  --stroke-2: rgba(255, 255, 255, .24);
+  --ink: #fff;
+  --text: #fff;
+  --text-2: rgba(255, 255, 255, .72);
+  --text-3: rgba(255, 255, 255, .52);
+  --panel: #111112;
+  --elevated: #1A1A1C;
+  --surface: #070707;
+  --control: #0B0B0C;
+  --border: rgba(255, 255, 255, .09);
+  --border-strong: rgba(255, 255, 255, .18);
+  --hover: rgba(255, 255, 255, .05);
+  --lg-button: linear-gradient(180deg, rgba(255,255,255,.13), rgba(255,255,255,.05));
+  --lg-button-bevel: inset 1px 1px 0 rgba(255,255,255,.3), inset -1px -1px 0 rgba(255,255,255,.06), 0 6px 18px rgba(0,0,0,.3);
+  color: #fff;
+}
+:root[data-theme="light"][data-palette="mono"] #view-theater {
+  --h1: #fff; --h2: #E6E6E6; --h3: #fff; --heat-ink: #000;
+  --heat: linear-gradient(100deg, var(--h1) 0%, var(--h2) 55%, var(--h3) 100%);
+  --heat-glow: rgba(255, 255, 255, .16);
+}
+
+/* Cutting Room: draw the facecam by hand */
+.facecam-cropper { position: absolute; z-index: 4; cursor: crosshair; touch-action: none; outline: none; background: rgba(0, 0, 0, .25); }
+.facecam-cropper:focus-visible { box-shadow: inset 0 0 0 2px var(--h2); }
+.fc-hint { position: absolute; left: 50%; top: 50%; translate: -50% -50%; padding: 6px 12px; border-radius: 999px; background: rgba(0, 0, 0, .7); color: #fff; font: 600 12.5px var(--f-ui); pointer-events: none; }
+.fc-box { position: absolute; cursor: move; box-shadow: 0 0 0 2px #fff, 0 0 0 9999px rgba(0, 0, 0, .45); border-radius: 4px; }
+.fc-label { position: absolute; left: 6px; top: 6px; padding: 2px 7px; border-radius: 6px; background: #fff; color: #000; font: 700 11px var(--f-ui); pointer-events: none; }
+.fc-resize { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px var(--h2); cursor: nwse-resize; }
+
+/* Cutting Room: resizable timeline, history, shuttle, clips queue */
+
+/* A clip the creator finished in the in-app editor: exports use that cut. */
+.theater-edited {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  background: var(--heat-soft);
+  box-shadow: inset 0 0 0 1px var(--heat-line);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Cutting Room: the facecam the creator drew, shown over the editor's preview. */
+
+/* Cutting Room, Gameplay layout: the vertical window the clip is cut from. */
+.gameplay-window { position: absolute; inset: 0; z-index: 4; cursor: ew-resize; touch-action: none; outline: none; }
+.gameplay-window:focus-visible .gw-frame { box-shadow: 0 0 0 9999px rgba(0, 0, 0, .55), inset 0 0 0 2px var(--h2); }
+.gameplay-window .gw-frame { position: absolute; top: 0; bottom: 0; border: 2px solid rgba(255, 255, 255, .9); border-radius: 4px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .55); cursor: grab; }
+.gameplay-window .gw-frame span { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); padding: 1px 7px; border-radius: 4px; background: rgba(0, 0, 0, .6); color: #fff; font: 600 11px/1.4 var(--f-ui); white-space: nowrap; }
+
+/* Cutting Room: "Load a session" picker (on the shared project dialog). */
+.session-picker .project-dialog { width: min(560px, calc(100vw - 48px)); display: grid; gap: 14px; }
+.session-picker .sp-list { margin: 0; padding: 0; list-style: none; max-height: min(420px, 55vh); overflow-y: auto; display: grid; gap: 4px; }
+.session-picker .sp-item { width: 100%; display: flex; align-items: center; gap: 12px; padding: 6px; border: 0; border-radius: 12px; background: transparent; color: var(--t1); text-align: left; cursor: pointer; }
+.session-picker .sp-item:hover, .session-picker .sp-item:focus-visible { background: var(--fill); outline: none; }
+.session-picker .sp-item.is-current { background: var(--fill); }
+.session-picker .sp-poster { position: relative; flex: 0 0 96px; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: #111; }
+.session-picker .sp-poster > * { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.session-picker .sp-text { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.session-picker .sp-text b { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-picker .sp-text small { font-size: 12.5px; color: var(--t3); }
+.session-picker .sp-tag { font-size: 11.5px; color: var(--t3); padding-right: 6px; }
+.session-picker .sp-empty { padding: 16px 6px; color: var(--t3); font-size: 13px; }
+
+/* Cutting Room, 9:16 preview: drag the picture to reframe Gameplay. */
+.gameplay-pan { position: absolute; inset: 0; z-index: 4; cursor: grab; touch-action: none; outline: none; }
+.gameplay-pan:active { cursor: grabbing; }
+.gameplay-pan:focus-visible { box-shadow: inset 0 0 0 2px var(--h2); }
+.gameplay-pan-hint { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); padding: 3px 9px; border-radius: 999px; background: rgba(0, 0, 0, .55); color: #fff; font: 600 11px/1.4 var(--f-ui); white-space: nowrap; opacity: 0; transition: opacity var(--dur-2) ease; pointer-events: none; }
+.gameplay-pan:hover .gameplay-pan-hint { opacity: 1; }
+
+/* The facecam dialog: a still of the whole frame to draw on. */
+.facecam-dialog .project-dialog { width: min(820px, calc(100vw - 48px)); }
+.facecam-stage { position: relative; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: #0a0a0a; display: grid; place-items: center; }
+.facecam-stage > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; user-select: none; }
+.facecam-dialog .project-dialog-actions .sp { flex: 1; }

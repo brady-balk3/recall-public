@@ -3,6 +3,14 @@
 import { create } from "zustand";
 import { DEFAULT_API_ENDPOINT, apiFetch, apiUrl, mediaUrl } from "./api";
 import { fmtClock } from "./format";
+import {
+  CAPTION_COLOR_STORAGE_KEY,
+  isCaptionColor,
+  readStoredAccent,
+  writeStoredAccent,
+  type AccentChoice,
+  type CaptionColor,
+} from "../theme/accent";
 
 export type JobStatus =
   | "idle"
@@ -69,6 +77,8 @@ export interface Clip {
    * backend stats the file; a set export_path is not proof it survived, since
    * a creator can reclaim the exports folder at any time. */
   mediaState?: ClipMediaState;
+  /** The creator's saved in-app-editor cut. Exports use it over Recall's render. */
+  editedVideoUrl?: string;
   /** Durable origin for clips produced by a Recall Session-assisted scan. */
   recallProvenance?: RecallProvenance;
 }
@@ -124,6 +134,33 @@ export interface ReactionTimeline {
   /** Labeled game timeline for variety VODs (plan 22 §5.1); absent/empty on
    * single-game or pre-segmentation scans. */
   segments?: { start: number; end: number; game: string }[];
+  /** A first-pass curve streamed before the judges run; the final timeline
+   * replaces it and it is never persisted. */
+  preliminary?: boolean;
+}
+
+/** Speech and chat activity across the VOD, 0..1 per equal slice (scan_lanes). */
+export interface ScanLanes {
+  version: number;
+  duration: number;
+  speech: number[] | null;
+  chat: number[] | null;
+  /** "smart_regions" when chat was only read around likely moments. */
+  chat_scope?: string;
+  /** Stretches a region-scoped transcript actually heard; null for a full pass. */
+  speech_regions?: [number, number][] | null;
+  /** While ASR is still running: how far into the VOD it has heard. */
+  speech_until?: number;
+}
+
+/** "checking" while the vision model looks at it, then its verdict. */
+export type CandidateStatus = "waiting" | "checking" | "post" | "maybe" | "skip" | "error";
+
+/** One likely moment queued for the vision check (candidates_ready / candidate_verdict). */
+export interface ScanCandidate {
+  start: number;
+  end: number;
+  status: CandidateStatus;
 }
 
 export type EtaConfidence = "unknown" | "low" | "medium" | "high";
@@ -148,6 +185,8 @@ export interface FoundClip {
   score: number;
   /** True for selection-time candidates whose MP4/thumb don't exist yet. */
   pending?: boolean;
+  /** Its caption is written (clip_captioned); the preview isn't cut yet. */
+  captioned?: boolean;
 }
 
 export interface Job {
@@ -197,6 +236,10 @@ export interface Job {
   foundClips?: FoundClip[];
   /** Real R(t) curve streamed mid-job via the timeline_ready SSE event. */
   liveTimeline?: ReactionTimeline;
+  /** Speech and chat lanes, streamed once transcription and chat are read. */
+  liveLanes?: ScanLanes;
+  /** Likely moments the vision model is checking, in stream order. */
+  candidates?: ScanCandidate[];
   errorMessage?: string;
   /** Semantic/visual judge + device health for the active scan. */
   scanHealth?: {
@@ -266,7 +309,6 @@ export interface LearningStatus {
 }
 
 export type ThemeMode = "light" | "dark";
-export type AccentTheme = "ember" | "rose" | "violet" | "crimson" | "cobalt" | "sage";
 /** How exported clips are framed. Automatic chooses one stable composition per
  * VOD from gameplay motion/event evidence. Consumed by the export engine. */
 export type ExportLayout = "auto" | "vertical_split" | "gameplay_pip";
@@ -279,7 +321,11 @@ export interface ManualClipOptions {
   tags?: string[];
   layout: ManualClipLayout;
   focus_x: number;
+  /** A facecam box the creator drew, normalized [x, y, w, h]. */
+  facecam_override?: number[] | null;
   captions_enabled: boolean;
+  /** Caption text the creator corrected in the Cutting Room; burned into the first render. */
+  caption_text?: string;
   video_fade_in: number;
   video_fade_out: number;
   audio_fade_in: number;
@@ -294,7 +340,7 @@ export interface ManualFraming {
   gameplay?: number[] | null;
   focus_x: number;
   requested: ManualClipLayout;
-  source: "scan_model" | "nearest_clip" | "fallback";
+  source: "scan_model" | "nearest_clip" | "fallback" | "manual";
   label: string;
   reason: string;
 }
@@ -482,8 +528,10 @@ export interface Settings {
   desktopNotifications: boolean;
   apiEndpoint: string;
   theme: ThemeMode;
-  /** Creator-selected Studio Heat accent. Local-only presentation preference. */
-  accentTheme: AccentTheme;
+  /** The one accent color, in OKLCH terms; null is black and white. Local-only. */
+  accent: AccentChoice;
+  /** Burned-in caption highlight. Separate from the app accent. Local-only. */
+  captionColor: CaptionColor;
 }
 
 // Settings mirrored to the backend's settings table (plan 3.1). apiEndpoint
@@ -639,6 +687,9 @@ export const toClip = (c: any, apiEndpoint: string): Clip => {
     start_time: c.start_time,
     end_time: c.end_time,
     videoUrl,
+    editedVideoUrl: typeof c.edited_video === "string" && c.edited_video
+      ? mediaUrl(c.edited_video, apiEndpoint)
+      : undefined,
     thumbUrl,
     description: c.description || undefined,
     signals: parseSignals(c.signals),
@@ -737,6 +788,11 @@ const readStored = <T extends string>(key: string, fallback: T): T => {
   } catch {
     return fallback;
   }
+};
+
+const readStoredCaptionColor = (): CaptionColor => {
+  const value = readStored<string>(CAPTION_COLOR_STORAGE_KEY, "yellow");
+  return isCaptionColor(value) ? value : "yellow";
 };
 
 const readStoredNumber = (key: string, fallback: number, min: number, max: number): number => {
@@ -866,6 +922,8 @@ interface JobStore {
   // Session state layer
   currentSessionId?: string;
   sessions: Session[];
+  /** True once loadSessions has read the library from the backend at least once. */
+  sessionsLoaded: boolean;
   /** Job ids from the latest overnight batch enqueue (queue view focus). */
   batchJobIds: string[];
   /** The shown batch came from localStorage, not from this run's enqueue. */
@@ -881,7 +939,11 @@ interface JobStore {
       recallSessionId?: string;
       vodStartedAtUtc?: string;
     },
-  ) => Promise<void>;
+  ) => Promise<string | null>;
+  /** Open a local video for editing without scanning it. Resolves to its job id. */
+  openLocalVideo: (path: string) => Promise<string | null>;
+  /** Scan a video that was opened without one (same session, clips kept). */
+  scanOpenedVideo: (jobId: string) => Promise<boolean>;
   startJobBatch: (items: Array<{
     url: string;
     name: string;
@@ -919,9 +981,11 @@ interface JobStore {
   ) => Promise<CompileReelResult>;
   cancelExportOperation: () => Promise<void>;
   toggleSaveClip: (sessionId: string, clipId: string) => void;
+  /** Record (or clear) the creator's saved editor cut for a clip, without a refetch. */
+  markClipEdited: (clipId: string, editedVideoUrl: string | undefined) => void;
   setClipPassed: (sessionId: string, clipId: string, passed: boolean) => void;
   setClipMaybe: (sessionId: string, clipId: string, maybe: boolean) => void;
-  editClip: (sessionId: string, clipId: string, options: { start_time: number; end_time: number; fade_in?: number; fade_out?: number; video_fade_in?: number; video_fade_out?: number; audio_fade_in?: number; audio_fade_out?: number }) => Promise<Clip>;
+  editClip: (sessionId: string, clipId: string, options: { start_time: number; end_time: number; fade_in?: number; fade_out?: number; video_fade_in?: number; video_fade_out?: number; audio_fade_in?: number; audio_fade_out?: number; caption_text?: string }) => Promise<Clip>;
   resolveManualFraming: (sessionId: string, options: ManualClipOptions) => Promise<ManualFraming>;
   previewManualClip: (sessionId: string, options: ManualClipOptions) => Promise<Blob>;
   createManualClip: (sessionId: string, options: ManualClipOptions) => Promise<Clip>;
@@ -981,11 +1045,13 @@ export const useJobStore = create<JobStore>((set, get) => ({
     desktopNotifications: readStoredBoolean("recall-desktop-notifications", true),
     apiEndpoint: DEFAULT_API_ENDPOINT,
     theme: readStored<ThemeMode>("recall-theme", "dark"),
-    accentTheme: readStored<AccentTheme>("recall-accent-theme", "ember"),
+    accent: readStoredAccent(),
+    captionColor: readStoredCaptionColor(),
   },
 
   currentSessionId: undefined,
   sessions: [],
+  sessionsLoaded: false,
   batchJobIds: readStoredBatchJobIds(),
   batchRestored: batchRestoredFromDisk,
 
@@ -1084,6 +1150,7 @@ export const useJobStore = create<JobStore>((set, get) => ({
 
       set((state) => ({
         sessions,
+        sessionsLoaded: true,
         jobs,
         currentJob: state.currentJob && activeIds.has(state.currentJob.id)
           ? jobs.find((job) => job.id === state.currentJob?.id)
@@ -1446,6 +1513,15 @@ export const useJobStore = create<JobStore>((set, get) => ({
     timelineCache.delete(sessionId);
   },
 
+  markClipEdited: (clipId, editedVideoUrl) => {
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.clips.some((clip) => clip.id === clipId)
+          ? { ...session, clips: session.clips.map((clip) => (clip.id === clipId ? { ...clip, editedVideoUrl } : clip)) }
+          : session,
+      ),
+    }));
+  },
   toggleSaveClip: (sessionId, clipId) => {
     const session = get().sessions.find((s) => s.id === sessionId);
     const wasSaved = session?.savedClipIds.includes(clipId) ?? false;
@@ -1706,6 +1782,8 @@ export const useJobStore = create<JobStore>((set, get) => ({
       if (patch.mediaMuted !== undefined) localStorage.setItem("recall-media-muted", String(patch.mediaMuted));
       if (patch.keepAwakeWhileWorking !== undefined) localStorage.setItem("recall-keep-awake-working", String(patch.keepAwakeWhileWorking));
       if (patch.desktopNotifications !== undefined) localStorage.setItem("recall-desktop-notifications", String(patch.desktopNotifications));
+      if (patch.accent !== undefined) writeStoredAccent(patch.accent);
+      if (patch.captionColor !== undefined) localStorage.setItem(CAPTION_COLOR_STORAGE_KEY, patch.captionColor);
     } catch {}
     // Persist scan preferences server-side (plan 3.1) so they survive
     // restarts and agree across the desktop app and browser tabs.
@@ -1796,6 +1874,58 @@ export const useJobStore = create<JobStore>((set, get) => ({
     });
     if (!jobId) {
       get().addLog(`Unable to start analysis. Make sure the local studio is running.`, "warn");
+    }
+    return jobId;
+  },
+
+  openLocalVideo: async (path) => {
+    const settings = get().settings;
+    try {
+      const res = await apiFetch("/jobs/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_path: path }),
+      }, settings.apiEndpoint);
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        get().addLog(typeof body?.detail === "string" ? body.detail : "Recall couldn't open that video.", "warn");
+        return null;
+      }
+      await get().loadSessions();
+      return body.job_id as string;
+    } catch {
+      get().addLog("Recall's engine isn't answering. Make sure the local studio is running.", "warn");
+      return null;
+    }
+  },
+
+  scanOpenedVideo: async (jobId) => {
+    const settings = get().settings;
+    try {
+      const res = await apiFetch(`/jobs/${encodeURIComponent(jobId)}/scan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          settings: {
+            processingMode: settings.processingMode,
+            performanceProfile: settings.performanceProfile,
+            exportLayout: settings.exportLayout,
+            captionStyle: settings.captionStyle,
+            vtuberMode: "off",
+          },
+        }),
+      }, settings.apiEndpoint);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        get().addLog(typeof body?.detail === "string" ? body.detail : "Recall couldn't start scanning this video.", "warn");
+        return false;
+      }
+      get().addLog("Scanning this video for moments. Keep cutting while it runs.", "info");
+      await get().loadSessions();
+      return true;
+    } catch {
+      get().addLog("Recall's engine isn't answering. Make sure the local studio is running.", "warn");
+      return false;
     }
   },
 
@@ -2014,7 +2144,9 @@ async function enqueueScanJob(
         settings: {
           processingMode: settings.processingMode,
           performanceProfile: settings.performanceProfile,
-          exportLayout: settings.exportLayout,
+          // VTuber framing overrides the layout for this request only. Keep
+          // the saved preference for the next scan and other batch rows.
+          exportLayout: opts.vtuberMode === "confirmed" ? "auto" : settings.exportLayout,
           captionStyle: settings.captionStyle,
           // Identity is deliberately per scan and defaults off. Never infer
           // this from webcam geometry or a VOD title.
@@ -2105,6 +2237,9 @@ const foundFromEvent = (ev: JobEvent): FoundClip | undefined => {
   };
 };
 
+const PINNED_ONLY_EVENTS = new Set(["scan_lanes", "candidate_verdict", "clip_captioned"]);
+const candidateKey = (start: number) => start.toFixed(1);
+
 // Merge an ordered batch of raw events into the current job's history.
 function mergeEvents(jobId: string, rawEvents: any[]) {
   if (!rawEvents?.length) return;
@@ -2119,7 +2254,9 @@ function mergeEvents(jobId: string, rawEvents: any[]) {
     .filter((event) => event.jobId === jobId);
   if (!mapped.length) return;
   const prev = job.events ?? [];
-  const combined = [...mapped, ...prev];
+  // Lanes and per-candidate verdicts are pinned onto the job below; dozens of
+  // them would otherwise evict the activity history from the capped buffer.
+  const combined = [...mapped.filter((e) => !PINNED_ONLY_EVENTS.has(e.eventType)), ...prev];
   // Dedupe on (eventType, phase, message, at) and cap the buffer.
   const seen = new Set<string>();
   const deduped: JobEvent[] = [];
@@ -2135,6 +2272,25 @@ function mergeEvents(jobId: string, rawEvents: any[]) {
   const found = new Map<string, FoundClip>();
   (job.foundClips ?? []).forEach((f) => found.set(f.clipId, f));
   let liveTimeline = job.liveTimeline;
+  let liveLanes = job.liveLanes;
+  const candidates = new Map<string, ScanCandidate>();
+  (job.candidates ?? []).forEach((c) => candidates.set(candidateKey(c.start), c));
+  for (const e of [...mapped].sort((a, b) => a.at - b.at)) {
+    if (e.eventType === "scan_lanes" && e.payload) liveLanes = e.payload as ScanLanes;
+    if (e.eventType === "candidates_ready" && Array.isArray(e.payload?.windows)) {
+      for (const [start, end] of e.payload.windows as [number, number][]) {
+        if (!candidates.has(candidateKey(start))) candidates.set(candidateKey(start), { start, end, status: "waiting" });
+      }
+    }
+    if (e.eventType === "candidate_verdict" && e.payload) {
+      const { start, end, status } = e.payload as { start: number; end: number; status: CandidateStatus };
+      candidates.set(candidateKey(start), { start, end, status });
+    }
+  }
+  const captioned = new Map<string, string>();
+  for (const e of mapped) {
+    if (e.eventType === "clip_captioned" && e.payload?.clip_id) captioned.set(e.payload.clip_id, e.payload.title || "");
+  }
   for (const e of mapped) {
     const fc = foundFromEvent(e);
     // The post-export clip_found supersedes the selection-time candidate
@@ -2146,6 +2302,11 @@ function mergeEvents(jobId: string, rawEvents: any[]) {
     if (e.eventType === "timeline_ready" && e.payload?.timeline) {
       liveTimeline = e.payload.timeline as ReactionTimeline;
     }
+  }
+  // A caption names the moment for real; the placeholder title goes.
+  for (const [clipId, title] of captioned) {
+    const clip = found.get(clipId);
+    if (clip?.pending) found.set(clipId, { ...clip, captioned: true, title: title || clip.title });
   }
   const foundClips = Array.from(found.values());
 
@@ -2187,7 +2348,12 @@ function mergeEvents(jobId: string, rawEvents: any[]) {
     }
   }
 
-  store.updateJob(jobId, { events, foundClips, liveTimeline, scanHealth });
+  const candidateList = Array.from(candidates.values()).sort((a, b) => a.start - b.start);
+  store.updateJob(jobId, {
+    events, foundClips, liveTimeline, scanHealth,
+    ...(liveLanes ? { liveLanes } : {}),
+    ...(candidateList.length ? { candidates: candidateList } : {}),
+  });
 }
 
 const jobSubscriptions = new Map<string, () => void>();
@@ -2250,7 +2416,7 @@ export function subscribeJobEvents(jobId: string, onClosed?: () => void): () => 
           ...telemetryFromSnapshot(data),
           ...(data.status === "failed" ? { errorMessage: data.message || "Analysis failed." } : {}),
         });
-        if (Array.isArray(data.recent_events)) mergeEvents(jobId, data.recent_events);
+        if (Array.isArray(data.recent_events)) mergeEvents(jobId, [...data.recent_events, ...(data.scan_state_events ?? [])]);
       } catch {}
     });
 
@@ -2409,7 +2575,7 @@ async function pollTick(jobId: string): Promise<boolean> {
     ...telemetryFromSnapshot(data),
     ...(status === "failed" ? { errorMessage: data.message || "Analysis failed." } : {}),
   });
-  if (Array.isArray(data.recent_events)) mergeEvents(jobId, data.recent_events);
+  if (Array.isArray(data.recent_events)) mergeEvents(jobId, [...data.recent_events, ...(data.scan_state_events ?? [])]);
 
   if (mappedStatus === "completed") {
     store.addLog(`Analysis complete. Getting your clips...`, "success");

@@ -25,6 +25,7 @@ clips; only the crop inside the band varies with the detected plate.
 """
 
 from dataclasses import dataclass
+import math
 from typing import List, Optional, Tuple
 
 from engines.clip.layout import _is_plausible_facecam
@@ -127,16 +128,25 @@ def _gameplay_box_without_facecam(gameplay_metadata, facecam_metadata=None):
     return box
 
 
-def _gameplay_crop_prefix(gameplay_metadata, facecam_metadata=None) -> str:
-    """Crop-to-gameplay filter step (with trailing comma), or ""."""
+def _gameplay_crop_box(gameplay_metadata, facecam_metadata=None):
+    """The gameplay source rect after its chrome inset (normalized), or None."""
     box = _gameplay_box_without_facecam(gameplay_metadata, facecam_metadata)
     if box is None:
-        return ""
+        return None
     gx, gy, gw, gh = box
     gx += gw * GAMEPLAY_INSET_FRAC_SIDES
     gy += gh * GAMEPLAY_INSET_FRAC_TOP
     gw -= gw * 2 * GAMEPLAY_INSET_FRAC_SIDES
     gh -= gh * (GAMEPLAY_INSET_FRAC_TOP + GAMEPLAY_INSET_FRAC_BOTTOM)
+    return gx, gy, gw, gh
+
+
+def _gameplay_crop_prefix(gameplay_metadata, facecam_metadata=None) -> str:
+    """Crop-to-gameplay filter step (with trailing comma), or ""."""
+    box = _gameplay_crop_box(gameplay_metadata, facecam_metadata)
+    if box is None:
+        return ""
+    gx, gy, gw, gh = box
     return (
         f"crop=iw*{_fmt_filter_number(gw)}:ih*{_fmt_filter_number(gh)}:"
         f"iw*{_fmt_filter_number(gx)}:ih*{_fmt_filter_number(gy)},"
@@ -314,6 +324,18 @@ def _pip_wide_crop(
     )
 
 
+def _facecam_plate_box(
+    fx: float,
+    fy: float,
+    fw: float,
+    fh: float,
+    bottom_inset: float = FACECAM_INSET_FRAC_BOTTOM,
+):
+    """The facecam source rect after its safety inset (normalized)."""
+    cw, ch = _facecam_cropped_dims(fw, fh, bottom_inset)
+    return fx + fw * FACECAM_INSET_FRAC_LEFT, fy + fh * FACECAM_INSET_FRAC_TOP, cw, ch
+
+
 def _facecam_plate_crop(
     fx: float,
     fy: float,
@@ -321,9 +343,7 @@ def _facecam_plate_crop(
     fh: float,
     bottom_inset: float = FACECAM_INSET_FRAC_BOTTOM,
 ) -> str:
-    cw, ch = _facecam_cropped_dims(fw, fh, bottom_inset)
-    cx = fx + fw * FACECAM_INSET_FRAC_LEFT
-    cy = fy + fh * FACECAM_INSET_FRAC_TOP
+    cx, cy, cw, ch = _facecam_plate_box(fx, fy, fw, fh, bottom_inset)
     return (
         f"crop=iw*{_fmt_filter_number(cw)}:ih*{_fmt_filter_number(ch)}:"
         f"iw*{_fmt_filter_number(cx)}:ih*{_fmt_filter_number(cy)}"
@@ -381,10 +401,22 @@ def resolve_plan(
     gameplay = _safe_gameplay_box(gameplay_metadata)
     gameplay_crop = _gameplay_crop_prefix(gameplay_metadata, facecam_metadata)
 
+    # Confirmed cutouts carry an authored source crop and alpha mask, not a
+    # detected webcam panel. Large square avatar crops can exceed the webcam
+    # area limit; still require finite geometry entirely inside the source.
+    authored_avatar = False
+    if layout_type == KIND_VTUBER and facecam_metadata and len(facecam_metadata) >= 4:
+        x, y, w, h = (float(v) for v in facecam_metadata[:4])
+        authored_avatar = (
+            all(math.isfinite(v) for v in (x, y, w, h))
+            and 0.0 <= x <= 0.98 and 0.0 <= y <= 0.98
+            and w >= 0.02 and h >= 0.02
+            and x + w <= 1.000001 and y + h <= 1.000001
+        )
     use_facecam = (
         bool(facecam_metadata)
         and layout_type != KIND_FULL
-        and _is_plausible_facecam(facecam_metadata)
+        and (authored_avatar if layout_type == KIND_VTUBER else _is_plausible_facecam(facecam_metadata))
     )
     if not use_facecam:
         kind = KIND_CAMERA if layout_type == KIND_CAMERA else KIND_FULL
@@ -534,3 +566,92 @@ def build_video_graph(
 
     # KIND_FULL — straight portrait cover-crop of the (optionally windowed) game.
     return [f"[0:v]setpts=PTS-STARTPTS,{fill(out_w, out_h)}[outv_raw]"]
+
+
+def _cover_window(source, target_w: float, target_h: float, bias_x: float, bias_y: float):
+    """The part of ``source`` (normalized, 16:9 frame) that cover-fills a
+    ``target_w`` x ``target_h`` px rectangle, slid by the biases: exactly what
+    ``scale=...:force_original_aspect_ratio=increase,crop=...`` keeps."""
+    sx, sy, sw, sh = source
+    src_w = sw * 1920.0
+    src_h = sh * 1080.0
+    scale = max(target_w / max(src_w, 1e-6), target_h / max(src_h, 1e-6))
+    vis_w = min(src_w, target_w / scale)
+    vis_h = min(src_h, target_h / scale)
+    x = sx * 1920.0 + (src_w - vis_w) * _clamp(bias_x, 0.0, 1.0)
+    y = sy * 1080.0 + (src_h - vis_h) * _clamp(bias_y, 0.0, 1.0)
+    return [x / 1920.0, y / 1080.0, vis_w / 1920.0, vis_h / 1080.0]
+
+
+def plan_layers(plan: LayoutPlan, out_w: int = 1080, out_h: int = 1920, preview: bool = False) -> List[dict]:
+    """The composition as plain rectangles, for the editor's live 9:16 preview.
+
+    Each layer takes ``source`` (a normalized rect of the 16:9 frame) and
+    stretches it onto ``target`` ([x, y, w, h] px of the output canvas), later
+    layers on top. Computed from the same helpers as :func:`build_video_graph`,
+    so the editor shows what the render will make. Two treatments are
+    approximated: the VTuber avatar's alpha cutout (a square crop) and the
+    blurred backdrop behind an uncovered fullscreen camera (unblurred).
+    """
+    full = (0.0, 0.0, 1.0, 1.0)
+    gameplay_box = _gameplay_crop_box(
+        list(plan.gameplay) if plan.gameplay else None,
+        list(plan.facecam) if plan.facecam else None,
+    ) or full
+
+    def gameplay_layer(y: float, h: float) -> dict:
+        return {
+            "role": "gameplay",
+            "source": _cover_window(gameplay_box, out_w, h, plan.focus_x, 0.5),
+            "target": [0.0, y, float(out_w), h],
+        }
+
+    if plan.kind == KIND_STACK and plan.facecam is not None:
+        fx, fy, fw, fh = plan.facecam
+        band_h = _facecam_band_height(fw, fh) * out_h // 1920
+        band_h -= band_h % 2
+        bias = _face_bias(
+            _facecam_plate_aspect(*_facecam_cropped_dims(fw, fh, FACECAM_STACK_INSET_FRAC_BOTTOM)),
+            out_w / max(1, band_h),
+            plan.facecam_subject_top,
+            FACECAM_STACK_INSET_FRAC_BOTTOM,
+        )
+        plate = _facecam_plate_box(fx, fy, fw, fh, FACECAM_STACK_INSET_FRAC_BOTTOM)
+        return [
+            gameplay_layer(float(band_h), float(out_h - band_h)),
+            {"role": "facecam", "source": _cover_window(plate, out_w, band_h, 0.5, bias), "target": [0.0, 0.0, float(out_w), float(band_h)]},
+        ]
+
+    if plan.kind == KIND_PIP and plan.facecam is not None:
+        fx, fy, fw, fh = plan.facecam
+        px, py, pw, ph = _facecam_plate_box(fx, fy, fw, fh)
+        cw, ch = _facecam_cropped_dims(fw, fh)
+        aspect = _facecam_plate_aspect(cw, ch)
+        if aspect < PIP_CAM_TARGET_ASPECT - 1e-3:
+            keep = aspect / PIP_CAM_TARGET_ASPECT
+            bias = _face_bias(aspect, PIP_CAM_TARGET_ASPECT, plan.facecam_subject_top)
+            py += ph * (1.0 - keep) * bias
+            ph *= keep
+        cam_w, cam_h = _pip_facecam_size(fw, fh, preview)
+        return [
+            gameplay_layer(0.0, float(out_h)),
+            {"role": "facecam", "source": [px, py, pw, ph], "target": [(out_w - cam_w) / 2.0, float(PIP_TOP_MARGIN), float(cam_w), float(cam_h)]},
+        ]
+
+    if plan.kind == KIND_VTUBER and plan.facecam is not None:
+        fx, fy, fw, fh = plan.facecam
+        side = out_w * 500.0 / 1080.0
+        return [
+            gameplay_layer(0.0, float(out_h)),
+            {"role": "facecam", "source": [fx, fy, fw, fh], "target": [(out_w - side) / 2.0, 0.0, side, side]},
+        ]
+
+    if plan.kind == KIND_CAMERA and not plan.camera_cover:
+        scale = min(out_w / 1920.0, out_h / 1080.0)
+        w, h = 1920.0 * scale, 1080.0 * scale
+        return [
+            gameplay_layer(0.0, float(out_h)),
+            {"role": "camera", "source": list(gameplay_box), "target": [(out_w - w) / 2.0, (out_h - h) / 2.0, w, h]},
+        ]
+
+    return [gameplay_layer(0.0, float(out_h))]

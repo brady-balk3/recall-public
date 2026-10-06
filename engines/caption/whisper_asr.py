@@ -459,12 +459,11 @@ def generate_tiktok_ass(result: dict, output_ass: str, style=None,
         f.write("\n".join(events))
     return output_ass
 
-def generate_ass_from_transcript(transcript: dict, start: float, end: float, output_ass: str, style=None) -> str:
-    """Build a clip .ass by SLICING a precomputed VOD transcript (no re-transcription).
+def slice_transcript_words(transcript: dict, start: float, end: float) -> list:
+    """The words of a VOD transcript inside [start, end], clip-relative.
 
-    Reuses the single VOD-level Whisper pass (handbook/20 Â§1.1): pick words inside
-    [start, end] and rebase their timestamps to clip-relative (the exported clip
-    starts at 0), then render with the existing TikTok-style formatter.
+    The one slicer behind both the burned-in captions and the Cutting Room's
+    caption track, so the words the creator edits are the words that render.
     """
     clip_words = []
     for segment in transcript.get("segments", []):
@@ -480,6 +479,17 @@ def generate_ass_from_transcript(transcript: dict, start: float, end: float, out
                 "start": max(0.0, ws - start),
                 "end": max(0.0, we - start),
             })
+    return clip_words
+
+
+def generate_ass_from_transcript(transcript: dict, start: float, end: float, output_ass: str, style=None) -> str:
+    """Build a clip .ass by SLICING a precomputed VOD transcript (no re-transcription).
+
+    Reuses the single VOD-level Whisper pass (handbook/20 Â§1.1): pick words inside
+    [start, end] and rebase their timestamps to clip-relative (the exported clip
+    starts at 0), then render with the existing TikTok-style formatter.
+    """
+    clip_words = slice_transcript_words(transcript, start, end)
     # One synthetic segment; generate_tiktok_ass chunks words into groups of 4.
     # Returns None (no file written) when the caption style is disabled.
     return generate_tiktok_ass({"segments": [{"words": clip_words}]}, output_ass,

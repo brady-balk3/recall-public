@@ -602,7 +602,7 @@ class QwenASRAdapter:
     def transcribe(self, audio_path, word_timestamps=True, language=None,
                    condition_on_previous_text=True, cancel_check=None,
                    progress_callback=None, vad_filter=False,
-                   initial_prompt=None, **_ignored) -> Dict:
+                   initial_prompt=None, words_callback=None, **_ignored) -> Dict:
         """Transcribe a whole file. Returns the openai-whisper result dict.
 
         ``initial_prompt`` becomes the biasing context rather than a decoder
@@ -613,6 +613,11 @@ class QwenASRAdapter:
         ``word_timestamps``, ``condition_on_previous_text`` and ``vad_filter``
         are accepted and ignored: words are always timed, chunks never condition
         on each other, and the VAD is not optional here.
+
+        ``words_callback``, when given, receives each chunk's timed words (VOD
+        time) as soon as the chunk is aligned, so a live view can draw speech
+        while the pass is still running. It is display-only: a failing hook is
+        logged and transcription carries on.
         """
         _ = (word_timestamps, condition_on_previous_text, vad_filter)
         if cancel_check:
@@ -641,6 +646,11 @@ class QwenASRAdapter:
                 word["start"] += begin
                 word["end"] += begin
             words.extend(timed)
+            if words_callback and timed:
+                try:
+                    words_callback(timed)
+                except Exception as exc:  # noqa: BLE001 - display hook only
+                    print(f"ASR words hook failed: {exc}")
             if progress_callback:
                 progress_callback(min(end, duration), duration)
 

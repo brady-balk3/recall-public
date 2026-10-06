@@ -1,0 +1,39 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Memory, Recall Live and Insights: the shipped tools on the page grid,
+   with the same headline scale and glass cards as the rebuilt pages. */
+
+.recall-live-shell {
+  width: 100%;
+  max-width: calc(var(--page-max) + var(--page-pad) * 2);
+  margin: 0 auto;
+  padding: 16px var(--page-pad) 40px;
+}
+
+/* titles */
+.recall-live-head h1 {
+  font-family: var(--f-disp);
+  font-size: 48px;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: var(--disp-track);
+  color: var(--t1);
+}
+.recall-live-head { align-items: center; margin-top: 18px; }
+.recall-live-head > span:not(.recall-live-alpha) { font-size: 15px; color: var(--t2); }
+
+/* the tools' main surfaces become content glass */
+.memory-results,
+.memory-detail,
+.recall-live-shell > :not(.recall-live-head) {
+  border: 0;
+  border-radius: 24px;
+  background-color: transparent;
+  background-image: var(--lg-fill-card);
+  box-shadow: var(--lg-bevel), var(--lg-drop);
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
+  backdrop-filter: blur(28px) saturate(1.6);
+}
+
+/* Insights story: chapters keep their height instead of being squeezed into
+   a fixed column, and the timeline reads in the UI face (a legacy
+   [class*="-time"] rule was setting it in mono). */

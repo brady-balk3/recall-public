@@ -1,0 +1,169 @@
+
+#app-container > main:has(> .settings-view) > :is(.view-panel:not(.settings-view), .flow-topstrip) { display: none; }
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Settings as a page: sticky section list, sections as glass cards. */
+
+/* While Settings is open it is the page; the view underneath waits. */
+
+.set-grid { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; align-items: start; }
+.set-nav { position: sticky; top: 8px; display: grid; gap: 2px; padding: 8px; border-radius: 22px; }
+.set-nav button {
+  height: 38px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  background: transparent;
+  color: var(--t2);
+  font: 500 14px var(--f-ui);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-1) ease, color var(--dur-1) ease;
+}
+.set-nav button:hover { background: var(--fill); color: var(--t1); }
+.set-nav button.on { background: var(--lg-selected); box-shadow: var(--lg-selected-bevel); color: var(--t1); }
+
+/* Two stacks of sections: side by side on a wide window, one column when
+   there isn't room for two ~560px columns. (Not CSS multi-column: that made
+   every layout of this page ~13x slower.) */
+.set-body { min-width: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(560px, 1fr)); gap: 22px; align-items: start; }
+.set-col { display: grid; gap: 22px; min-width: 0; }
+.set-sec { display: grid; gap: 4px; padding: 26px 28px 20px; border-radius: 26px; scroll-margin-top: 16px; }
+.set-sec > h2 { font-size: 30px; }
+.set-sec > p { max-width: 70ch; margin-bottom: 12px; font-size: 13.5px; color: var(--t3); }
+.set-saved { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--keep); opacity: 0; transition: opacity var(--dur-2) ease; }
+.set-saved.on { opacity: 1; }
+.set-saved svg { width: 14px; height: 14px; }
+
+.set-name { display: flex; align-items: center; gap: 18px; padding: 8px 0 18px; }
+.set-name-field { display: grid; gap: 6px; flex: 1; max-width: 420px; font-size: 13px; color: var(--t2); }
+.set-name-field small { font-size: 12.5px; }
+
+/* accent wheel */
+.accent { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 28px; align-items: center; padding: 16px 0 8px; }
+.wheel { position: relative; width: 180px; height: 180px; border-radius: 50%; cursor: crosshair; touch-action: none; outline: none; }
+.wheel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--ring);
+  -webkit-mask: radial-gradient(circle, transparent 57px, #000 58px);
+  mask: radial-gradient(circle, transparent 57px, #000 58px);
+}
+.accent.is-mono .wheel::before { filter: saturate(.35) brightness(.8); }
+.wheel:focus-visible { box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--t1); }
+.wheel-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px #fff, 0 4px 12px rgba(0, 0, 0, .5);
+  transform: rotate(var(--a)) translateX(72px);
+  pointer-events: none;
+}
+.wheel-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 96px;
+  height: 96px;
+  margin: -48px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .2);
+}
+.wheel-core b { font-size: 13px; font-weight: 700; }
+.accent-side { display: grid; gap: 14px; }
+.acc-row { display: grid; grid-template-columns: 110px minmax(0, 1fr); align-items: center; gap: 12px; font-size: 13px; color: var(--t2); }
+.acc-row small { display: block; font-size: 11.5px; color: var(--t3); }
+.acc-row input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--track);
+  box-shadow: inset 0 0 0 1px var(--stroke);
+}
+.acc-row input[type="range"]:disabled { opacity: .35; }
+.acc-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .2), 0 2px 8px rgba(0, 0, 0, .4);
+  cursor: grab;
+}
+.acc-hint { font-size: 12.5px; }
+.acc-presets { display: flex; flex-wrap: wrap; gap: 10px; }
+.acc-dot {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .25);
+  transition: transform var(--dur-2) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) { .acc-dot:hover { transform: scale(1.1); } }
+.acc-dot.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--t1); }
+.acc-prev { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 16px; background: var(--fill); }
+
+/* caption highlight colors */
+.cap-colors { display: flex; flex-wrap: wrap; gap: 10px; }
+.cap-dot {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--dot);
+  color: #000;
+  font: 800 11px var(--f-ui);
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .25);
+}
+.cap-dot.on { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--t1); }
+
+@media (max-width: 1240px) {
+  .set-grid { grid-template-columns: minmax(0, 1fr); }
+  .set-nav { position: static; display: flex; flex-wrap: wrap; }
+  .accent { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+}
+
+/* avatar + optional photo (settings → you) */
+.avatar-pick { display: grid; justify-items: center; gap: 6px; flex: 0 0 auto; }
+.avatar-pick-face {
+  position: relative;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+  transition: transform 160ms var(--ease-out);
+}
+.avatar-pick-face:active:not(:disabled) { transform: scale(.97); }
+.avatar-pick-face:focus-visible { outline: 2px solid var(--h2); outline-offset: 3px; }
+.avatar-pick-face.is-over .lav { box-shadow: 0 0 0 3px var(--heat-line); }
+.avatar-pick-face[aria-busy="true"] { opacity: .6; }
+.avatar-pick-actions { display: flex; gap: 10px; }
+.avatar-pick .link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--t2);
+  font: 600 12px/1.3 var(--f-ui);
+  cursor: pointer;
+}
+.avatar-pick .link-btn:hover { color: var(--t1); text-decoration: underline; text-underline-offset: 2px; }
+.avatar-pick-error { max-width: 180px; color: var(--danger); font-size: 12px; text-align: center; }

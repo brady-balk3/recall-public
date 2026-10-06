@@ -1341,6 +1341,10 @@ class VisualJudgeSession:
         self.transcript = transcript
         self.chat_frames = chat_frames
         self.game_context = game_context
+        # Optional (start, end, status) hook for the live scan view: "checking"
+        # as a candidate starts, then its verdict ("post" | "maybe" | "skip")
+        # or "error". Display-only; a failing hook never touches judging.
+        self.on_candidate = None
         self.frame_count = max(2, min(8, int(frame_count)))
         self.max_candidates = max(1, int(max_candidates))
         self.remaining = self.max_candidates
@@ -1528,6 +1532,7 @@ class VisualJudgeSession:
             self.remaining -= 1
             started = time.perf_counter()
             judge_start, judge_end = judge_window(candidate)
+            self._notify(judge_start, judge_end, "checking")
             lo = judge_start - text_judge.WINDOW_PAD_SEC
             hi = judge_end + text_judge.WINDOW_PAD_SEC
             words = text_judge._words_in_window(self._words, lo, hi)
@@ -1566,6 +1571,7 @@ class VisualJudgeSession:
                     raise ValueError("Visual judge returned an invalid editorial verdict")
                 _attach_visual_fields(candidate, verdict, raw)
                 verdicts[idx] = verdict
+                self._notify(judge_start, judge_end, verdict.verdict)
                 self.records.append({
                     "candidate_index": idx,
                     "start": round(float(candidate.get("start", 0.0)), 3),
@@ -1587,6 +1593,7 @@ class VisualJudgeSession:
                 raise
             except Exception as exc:  # noqa: BLE001 - optional model never blocks a scan
                 self.failures += 1
+                self._notify(judge_start, judge_end, "error")
                 if not verdicts and len(self.records) == 0:
                     # The orchestrator may use this to activate the text fallback
                     # after closing the failed visual runtime.
@@ -1603,6 +1610,14 @@ class VisualJudgeSession:
                 })
                 print(f"Visual semantic judge skipped candidate {idx}: {exc}")
         return verdicts
+
+    def _notify(self, start: float, end: float, status: str) -> None:
+        if self.on_candidate is None:
+            return
+        try:
+            self.on_candidate(float(start), float(end), status)
+        except Exception as exc:  # noqa: BLE001 - display hook never blocks judging
+            print(f"Candidate status hook failed: {exc}")
 
     def ensure_capacity(self, n: int) -> None:
         """Guarantee room to judge ``n`` more candidates (deck-coverage pass).
