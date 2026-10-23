@@ -868,12 +868,26 @@ PLATE_SEED_FILL = 0.75
 PLATE_FLUSH_CONTINUE_FRAC = 0.45  # outside-strip border support vs inside
 PLATE_FLUSH_MAX_FRAC = 0.60       # strip size ceiling, vs the plate's own span
 PLATE_FLUSH_MIN_PX = 8            # too short a span to average meaningfully
+# A temporal mean lets a minority of frames own the profile. Measured on a
+# Fortnite VOD whose cam sits above the lobby menu: the "Equip A Sprite" / PLAY
+# buttons were on screen in 3 of 11 samples, yet their edges outscored every
+# plate border, pushed the plate's top out of the PLATE_MAX_LINES shortlist,
+# and the fallback snap stretched the crop down into the menu. The robust pass
+# averages only the quietest PLATE_ROBUST_KEEP of frames per pixel, so an edge
+# has to be there most of the time to count -- which is what a plate border is.
+PLATE_ROBUST_KEEP = 0.70
+# ...but on a borderless avatar (a PNGtuber with no plate) the same trimming
+# just reshuffles the outline and narrowed boxes into the wings, so the robust
+# answer is adopted only when every side it found is a hard border. Measured
+# over 16 VODs: real plates scored >=19 on every side, avatar outlines <=7.5.
+PLATE_ROBUST_SIDE_MIN = 12.0
 
 
 def _persistent_edge_profiles(
     stack: np.ndarray,
     row_span: Optional[tuple] = None,
     col_span: Optional[tuple] = None,
+    robust: bool = False,
 ):
     """(col_profile, row_profile) of temporal-mean gradient magnitude.
 
@@ -892,11 +906,21 @@ def _persistent_edge_profiles(
 
     Spans are given in the stack's own coordinates and never shift the returned
     profiles' index space, so callers keep addressing lines by window pixel.
+
+    ``robust`` drops each pixel's strongest frames before averaging; see
+    PLATE_ROBUST_KEEP.
     """
     rows = slice(None) if row_span is None else slice(*row_span)
     cols = slice(None) if col_span is None else slice(*col_span)
-    dx = np.abs(np.diff(stack[:, rows, :], axis=2)).mean(axis=0)  # (rows, cols-1)
-    dy = np.abs(np.diff(stack[:, :, cols], axis=1)).mean(axis=0)  # (rows-1, cols)
+
+    def _temporal(grad: np.ndarray) -> np.ndarray:
+        if not robust:
+            return grad.mean(axis=0)
+        keep = max(1, int(round(grad.shape[0] * PLATE_ROBUST_KEEP)))
+        return np.sort(grad, axis=0)[:keep].mean(axis=0)
+
+    dx = _temporal(np.abs(np.diff(stack[:, rows, :], axis=2)))  # (rows, cols-1)
+    dy = _temporal(np.abs(np.diff(stack[:, :, cols], axis=1)))  # (rows-1, cols)
     return dx.mean(axis=0), dy.mean(axis=1)
 
 
@@ -1145,11 +1169,12 @@ def _aspect_prior(w_px: float, h_px: float) -> float:
     return max(PLATE_ASPECT_PRIOR_FLOOR, decay)
 
 
-def _locate_plate_by_edges(cv2, frames, box, width, height, seed=None):
+def _locate_plate_by_edges(cv2, frames, box, width, height, seed=None, robust=False):
     """Search a wide neighborhood for the rectangle that best explains the plate.
 
     Returns a normalized box or None to decline. ``seed`` (normalized) is the
-    moving region, which the result must contain.
+    moving region, which the result must contain. ``robust`` builds the edge
+    profiles from the quietest frames only; see PLATE_ROBUST_KEEP.
     """
     x, y, w, h = (float(v) for v in box[:4])
     mx, my = w * RELOCATE_MARGIN, h * RELOCATE_MARGIN
@@ -1178,6 +1203,7 @@ def _locate_plate_by_edges(cv2, frames, box, width, height, seed=None):
         stack,
         row_span=_span(int(y * height) - y0, int((y + h) * height) - y0, y1 - y0),
         col_span=_span(int(x * width) - x0, int((x + w) * width) - x0, x1 - x0),
+        robust=robust,
     )
 
     xs = _prominent_lines(col_profile, PLATE_MAX_LINES, PLATE_LINE_MIN_SEP)
@@ -1442,6 +1468,47 @@ def _locate_plate_by_edges(cv2, frames, box, width, height, seed=None):
     return _finish((li, ti, ri, bi)) or tightened
 
 
+def _robust_plate_is_hard(cv2, frames, claim, plate, width, height) -> bool:
+    """Is every non-flush side of ``plate`` a hard border in the robust profile?
+
+    Measured in the same window and spans _locate_plate_by_edges searched for
+    ``claim``, so the prominences are the ones that search ranked lines by.
+    """
+    x, y, w, h = (float(v) for v in claim[:4])
+    mx, my = w * RELOCATE_MARGIN, h * RELOCATE_MARGIN
+    x0 = max(0, int((x - mx) * width))
+    y0 = max(0, int((y - my) * height))
+    x1 = min(width, int((x + w + mx) * width))
+    y1 = min(height, int((y + h + my) * height))
+    stack = np.stack([
+        cv2.cvtColor(f[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY).astype(np.float32)
+        for f in frames
+    ])
+    rows = (max(0, int(y * height) - y0), max(2, int((y + h) * height) - y0))
+    cols = (max(0, int(x * width) - x0), max(2, int((x + w) * width) - x0))
+    col_profile, row_profile = _persistent_edge_profiles(
+        stack, row_span=rows, col_span=cols, robust=True)
+
+    px, py, pw, ph = (float(v) for v in plate[:4])
+    sides = (
+        (col_profile, px * width, width, x0),
+        (col_profile, (px + pw) * width, width, x0),
+        (row_profile, py * height, height, y0),
+        (row_profile, (py + ph) * height, height, y0),
+    )
+    for profile, edge, extent, origin in sides:
+        if edge <= PLATE_EDGE_PIN_PX or edge >= extent - PLATE_EDGE_PIN_PX:
+            continue  # screen-clipped: no border line exists to measure
+        index = int(round(edge)) - origin
+        lo, hi = max(0, index - 2), min(len(profile), index + 3)
+        if hi <= lo:
+            return False
+        baseline = float(np.median(profile)) + 1e-6
+        if float(profile[lo:hi].max()) / baseline < PLATE_ROBUST_SIDE_MIN:
+            return False
+    return True
+
+
 def _layout_sample_times(
     layout: FacecamLayout, duration: float, samples: int,
 ) -> List[float]:
@@ -1607,6 +1674,18 @@ def refine_layout_boxes(
             seed = _relocate_to_live_feed(cv2, frames, original, width, height)
             moved = _locate_plate_by_edges(
                 cv2, frames, original, width, height, seed=seed)
+            # The mean profile can be owned by a minority of frames (a menu
+            # parked under the cam); a hard-bordered plate the quiet frames
+            # agree on overrides it.
+            robust = _locate_plate_by_edges(
+                cv2, frames, original, width, height, seed=seed, robust=True)
+            if (
+                robust is not None
+                and robust != moved
+                and _robust_plate_is_hard(
+                    cv2, frames, original, robust, width, height)
+            ):
+                moved = robust
             if moved is not None:
                 # Do not resnap geometry already placed by this stage at lower analysis
                 # resolution. Adjacent decorative edges can merge after downscaling.
