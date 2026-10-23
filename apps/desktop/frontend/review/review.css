@@ -255,6 +255,20 @@
   font-weight: 700;
 }
 
+/* Captions are on, but this clip's render went out without them. */
+.theater-no-captions {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  background: color-mix(in oklab, var(--danger) 16%, rgba(0, 0, 0, .4));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--danger) 45%, transparent);
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 /* Cutting Room: the facecam the creator drew, shown over the editor's preview. */
 
 /* Cutting Room, Gameplay layout: the vertical window the clip is cut from. */

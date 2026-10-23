@@ -45,6 +45,9 @@ from core.storage_lifecycle import (
 
 logger = logging.getLogger(__name__)
 
+# Render sidecar path -> (mtime_ns, captions_burned); see ClipService._captions_burned.
+_CAPTIONS_BURNED_CACHE: Dict[str, tuple] = {}
+
 # How long the first audible clip after a silent run takes to reach full level.
 # Short enough to keep the reaction's attack, long enough that it does not pop.
 REEL_FADE_IN_SECONDS = 0.45
@@ -954,6 +957,48 @@ class ClipService:
                     logger.debug("Could not read clip render metadata %s", meta_path, exc_info=True)
         return None
 
+    def _captions_burned(self, clip_id: str, export_path: Optional[str]) -> Optional[bool]:
+        """``captions_burned`` from the render sidecar, None when unrecorded.
+        Cached on the sidecar's mtime: the clip list asks for every clip on
+        every refresh, and a re-render rewrites the sidecar."""
+        candidates = [os.path.join(self.exports_dir, f"clip_{clip_id}_meta.json")]
+        if export_path:
+            stem = os.path.splitext(os.path.basename(export_path))[0]
+            candidates.append(os.path.join(self.exports_dir, f"{stem}_meta.json"))
+        for meta_path in candidates:
+            try:
+                stamp = os.stat(meta_path).st_mtime_ns
+            except OSError:
+                continue
+            cached = _CAPTIONS_BURNED_CACHE.get(meta_path)
+            if cached and cached[0] == stamp:
+                return cached[1]
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    burned = json.load(f).get("captions_burned")
+            except (OSError, ValueError, AttributeError):
+                burned = None
+            burned = burned if isinstance(burned, bool) else None
+            _CAPTIONS_BURNED_CACHE[meta_path] = (stamp, burned)
+            return burned
+        return None
+
+    def _annotate_rows(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """``annotate_clip_rows`` plus ``captions_missing``: captions are on,
+        but the clip's current render went out without them. False when that
+        is unknown (renders older than the record) or a Cutting Room cut
+        replaces the render."""
+        rows = annotate_clip_rows(self.db, rows)
+        captions_on = bool(rows) and self._caption_style(None).enabled
+        for row in rows:
+            row["captions_missing"] = bool(
+                captions_on
+                and row.get("media_state") == "ready"
+                and not row.get("edited_video")
+                and self._captions_burned(row["id"], row.get("export_path")) is False
+            )
+        return rows
+
     def render_info(self, clip_id: str) -> Dict[str, Any]:
         """What the clip's current render carries. ``captions_burned`` is None
         for renders made before Recall started recording it."""
@@ -1049,6 +1094,9 @@ class ClipService:
             video_path = self._local_source_video(job_row)
             layout = self._layout_from_meta(clip_row["id"], clip_row["export_path"])
             ass_path = self._regenerate_ass_if_possible(video_path, clip_row["id"], start, end)
+            if ass_path is None and self._caption_style(None).enabled:
+                logger.warning("Rendering clip %s without captions: no words were found for it",
+                               clip_row["id"])
             clip = GameClip(
                 clip_id=clip_row["id"],
                 start=start,
@@ -1306,6 +1354,7 @@ class ClipService:
         taken: set = set()
         source_dates: Dict[str, Optional[str]] = {}
         copied_records: List[tuple] = []  # (clip_id, src) for clips actually copied
+        render_refusals: Dict[str, str] = {}  # clip_id -> why its render was refused
         # Preserve caller order for progress/copying. Filenames use the clip's
         # persistent per-VOD number, independent of this export selection.
         for position, clip_id in enumerate(clip_ids, start=1):
@@ -1380,6 +1429,13 @@ class ClipService:
                 except FFmpegCancelled:
                     cancelled = True
                     break
+                except HTTPException as exc:
+                    # A clip whose Twitch source is gone fails on its own. It used
+                    # to end the whole export, so every clip queued behind it
+                    # (2026-10-06: a session whose source was on disk) failed too.
+                    src = None
+                    if isinstance(exc.detail, str):
+                        render_refusals[clip_id] = exc.detail
             if cancel_check is not None and cancel_check():
                 cancelled = True
                 break
@@ -1390,7 +1446,9 @@ class ClipService:
                     "reason": (
                         "Clip record was not found."
                         if row is None
-                        else "Recall could not render the final-quality file."
+                        else render_refusals.get(
+                            clip_id, "Recall could not render the final-quality file.",
+                        )
                     ),
                 })
                 completed_work += clip_duration
@@ -2017,7 +2075,7 @@ class ClipService:
         # export_path being set is not proof the file survived -- a creator can
         # reclaim the exports folder at any time. Tell the frontend what is
         # actually on disk so it stops requesting posters that 404.
-        return annotate_clip_rows(self.db, rows)
+        return self._annotate_rows(rows)
 
     @staticmethod
     def _more_candidate_id(job_id: str, candidate: Dict[str, Any]) -> str:
@@ -2223,8 +2281,7 @@ class ClipService:
             ).fetchall()
 
         by_id = {row["id"]: dict(row) for row in rows}
-        ordered = annotate_clip_rows(
-            self.db,
+        ordered = self._annotate_rows(
             [by_id[candidate["id"]] for candidate in batch if candidate["id"] in by_id],
         )
         return {
@@ -2241,7 +2298,7 @@ class ClipService:
             row = cursor.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Clip not found")
-        return annotate_clip_rows(self.db, [dict(row)])[0]
+        return self._annotate_rows([dict(row)])[0]
 
     EDITED_VIDEO_MAX_BYTES = 4 * 1024 ** 3
 
@@ -3638,8 +3695,10 @@ class ClipService:
             )
             return written if written and os.path.exists(written) else None
         except Exception:
-            logger.debug(
-                "medium.en caption pass failed for clip %s; falling back to VOD slice",
+            # Warning, not debug: the render goes ahead without words, and on
+            # 2026-10-03 a whole reframe lost its captions with nothing said.
+            logger.warning(
+                "Caption pass failed for clip %s; it will render without captions",
                 clip_id,
                 exc_info=True,
             )
@@ -3786,7 +3845,7 @@ class ClipService:
             row = cursor.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Clip not found")
-        return annotate_clip_rows(self.db, [dict(row)])[0]
+        return self._annotate_rows([dict(row)])[0]
 
 
 class ExportOperationService:

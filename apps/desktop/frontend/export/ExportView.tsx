@@ -157,6 +157,7 @@ export function ExportView(props: ExportViewProps) {
                             <Poster clip={clip} className="rl-media" />
                             <span className="dur num">{fmtClock(durationOf(clip))}</span>
                             {isExported(item) && <span className="state badge keep"><Check aria-hidden="true" />Exported</span>}
+                            {clip.captionsMissing && <span className="cap-miss badge danger" title="Captions are on, but this render went out without them">No captions</span>}
                           </button>
                           <button type="button" className={`x-sel ${selected ? "on" : ""}`} role="checkbox" aria-checked={selected} aria-label={`${selected ? "Deselect" : "Select"} ${clip.title} for export`} onClick={() => onToggleSelect(clip.id)}>
                             {selected && <Check aria-hidden="true" />}

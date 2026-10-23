@@ -2623,6 +2623,9 @@ export function StudioTheaterView({
             {clip.editedVideoUrl && (
               <span className="theater-edited" title="You finished this clip in the editor. Exports use your edit.">Your edit</span>
             )}
+            {clip.captionsMissing && (
+              <span className="theater-no-captions" title="Captions are on, but this render went out without them. Re-render it in the Cutting Room.">No captions</span>
+            )}
             <RecallOriginBadge provenance={clip.recallProvenance} />
           </div>
           </div>

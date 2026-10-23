@@ -57,6 +57,8 @@ export interface Clip {
   passed?: boolean;
   maybe?: boolean;
   exported?: boolean;
+  /** Captions are on, but this clip's current render went out without them. */
+  captionsMissing?: boolean;
   /** Posting hashtags from the caption engine (game-aware, plan 22 §3.3). */
   postTags?: string[];
   /** Non-gameplay scene code (lobby / intermission), else undefined. */
@@ -701,6 +703,7 @@ export const toClip = (c: any, apiEndpoint: string): Clip => {
     kept: !!c.kept,
     passed: !!c.passed,
     maybe: !!c.maybe,
+    captionsMissing: c.captions_missing === true,
     exported: !!c.exported_at,
     scene: c.scene || undefined,
     sceneLabel: c.scene ? SCENE_DISPLAY[c.scene] ?? "Lobby / Just chatting" : undefined,

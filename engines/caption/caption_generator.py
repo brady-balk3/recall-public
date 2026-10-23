@@ -14,6 +14,14 @@ from engines.caption.whisper_asr import (
 )
 from engines.caption.generator import generate_caption
 
+# Off: the streamer-voice filter (engines.caption.speaker_id) cut the streamer's
+# own words. Measured 2026-10-06 on two Fortnite VODs, 28 clips: it dropped
+# 40-86% of the words in most clips of a duo stream, and every word of a solo
+# keeper ("Why am I teeposing?"). The dropped text was first-person streamer
+# speech. Streamer windows scored 0.05-0.3 against the 0.35 bar, so no threshold
+# separates the voices. Missing captions are worse than a guest's line.
+FILTER_TO_STREAMER = False
+
 
 def _transcript_has_words(transcript: dict, start: float, end: float) -> bool:
     for segment in transcript.get("segments", []):
@@ -51,7 +59,7 @@ def process_clips_to_captions(clips: List[GameClip], stories: List[GameStory], v
     # would learn the wrong voice. None (no model, short VOD, extraction failure)
     # simply means no filtering.
     speaker_profile = None
-    if video_path and temp_dir and transcript is not None:
+    if FILTER_TO_STREAMER and video_path and temp_dir and transcript is not None:
         try:
             from engines.caption import speaker_id
             speaker_profile = speaker_id.profile_for_vod(
@@ -111,8 +119,20 @@ def process_clips_to_captions(clips: List[GameClip], stories: List[GameStory], v
             # clips that have one. Every other position is returned unchanged.
             has_top_facecam = bool((getattr(clip, "layout", None) or {}).get("facecam"))
             clip_style = style.facecam_safe(has_top_facecam)
+            # The clip's own decode can come back with no words where the VOD pass
+            # heard speech; burning that would ship a caption file saying nothing.
+            heard_nothing = (
+                clip_transcript is not None
+                and not _transcript_has_words(clip_transcript, 0.0, clip.end - clip.start)
+                and transcript is not None
+                and _transcript_has_words(transcript, clip.start, clip.end)
+            )
             try:
-                if video_path:
+                if heard_nothing:
+                    generate_ass_from_transcript(
+                        transcript, clip.start, clip.end, ass_output_path, style=clip_style,
+                    )
+                elif video_path:
                     generate_ass_for_clip(
                         video_path, clip.start, clip.end, ass_output_path,
                         cancel_check=cancel_check, style=clip_style,
