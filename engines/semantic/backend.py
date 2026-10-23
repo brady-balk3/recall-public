@@ -118,9 +118,24 @@ def _batch_verdict_schema(count: int) -> dict:
 # above what the JSON verdict needs, so the grammar closes before the cap.
 MAX_TOKENS = 160
 TEMPERATURE = 0.2
-# Enough context for the system text + transcript slice + chat lines; small
-# keeps the KV cache cheap on CPU.
-N_CTX = 2048
+# Enough context for the keep judge's wide prompt (rubric, creator examples,
+# 28 s of extra transcript) as well as the compact verdict prompts.
+N_CTX = 4096
+
+
+def keep_score_with(llm, prompt: str) -> float:
+    """Run the keep-judge prompt on a loaded Llama; return a 0-1 keep score."""
+    from engines.semantic import keep_judge
+
+    result = llm.create_chat_completion(
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "json_object", "schema": keep_judge.KEEP_JSON_SCHEMA},
+        temperature=0.0,
+        max_tokens=keep_judge.MAX_TOKENS,
+    )
+    content = result["choices"][0]["message"]["content"]
+    digit = int(parse_completion(content).get("keep_score"))
+    return keep_judge.expected_keep_score(llm, prompt, content, digit)
 
 
 # --- Completion-text salvage -------------------------------------------------
@@ -350,6 +365,16 @@ class LlamaBackend:
         )
         text = result["choices"][0]["message"]["content"]
         return parse_completion(text)
+
+    def keep_score(self, prompt: str) -> float:
+        """0-1 keep score (see engines.semantic.keep_judge)."""
+        return keep_score_with(self._load(), prompt)
+
+    def close(self) -> None:
+        """Free the weights; the next call loads them again."""
+        llm, self._llm = self._llm, None
+        if llm is not None:
+            llm.close()
 
     def generate_batch(self, prompt: str, count: int) -> list:
         """Judge several candidates in one constrained completion.

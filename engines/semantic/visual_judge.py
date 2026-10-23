@@ -1023,6 +1023,10 @@ class TextRoleBackend:
         )
         return text_backend.map_triage_verdicts(raw)
 
+    def keep_score(self, prompt: str) -> float:
+        """0-1 keep score on the shared instance (see engines.semantic.keep_judge)."""
+        return text_backend.keep_score_with(self.visual_backend._load(), prompt)
+
     def close(self) -> None:
         """No-op: VisualJudgeSession owns the shared instance."""
 

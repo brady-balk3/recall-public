@@ -142,6 +142,19 @@ class SelectionTuning:
     # judge actually ran on the candidate. Candidates without semantic fields
     # score exactly as before.
     semantic_score_weight: float = 0.8
+    # What the non-ranker share of the ``blend`` ordering ranks by.
+    # "semantic_keep" uses the keep judge's 0-1 keep probability
+    # (engines.semantic.keep_judge), then the text judge's payoff;
+    # "semantic_payoff" uses the payoff only; "signal" uses
+    # signal_editorial_score (reaction magnitude + hook + judge bonus).
+    # MEASURED 2026-10-12 by replaying 44 reviewed decks: signal_editorial
+    # ordered Keeps above Passes at 0.54 pairwise (0.45 on a loud Fortnite
+    # channel) against 0.62 for the payoff alone. Swapping it in at the same
+    # 0.35 ranker weight: known Keeps 157 -> 155, known Passes 274 -> 230, and
+    # top-five precision 0.463 -> 0.502. The keep score ordered the same
+    # reviewed clips at 0.674 (2026-10-13). A VOD with no judge reads falls
+    # back down the chain to "signal".
+    blend_editorial_source: str = "semantic_keep"
     # First-five-second hook quality is a first-class rank signal. The score
     # blends the local judge (when available) with signal-only evidence, so it
     # remains useful on installs without an LLM model.
@@ -2678,8 +2691,20 @@ def select_clips(
             result[order] = np.arange(len(values), dtype=np.float64) / (len(values) - 1)
             return result
 
+        # Unjudged candidates rank as 0: the judges read the finalist pool, so
+        # a candidate they never read was not a finalist. Each source falls
+        # back to the next when no candidate in this VOD carries it.
+        editorial_field = "signal_editorial_score"
+        fallbacks = {
+            "semantic_keep": ("semantic_keep_score", "semantic_payoff"),
+            "semantic_payoff": ("semantic_payoff",),
+        }.get(tuning.blend_editorial_source, ())
+        for field in fallbacks:
+            if any(c.get(field) is not None for c in ranked_candidates):
+                editorial_field = field
+                break
         signal_percentiles = _percentiles([
-            float(c.get("signal_editorial_score", 0.0) or 0.0)
+            float(c.get(editorial_field, 0.0) or 0.0)
             for c in ranked_candidates
         ])
         ranker_percentiles = _percentiles([

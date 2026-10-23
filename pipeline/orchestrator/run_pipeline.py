@@ -976,16 +976,17 @@ def _reaction_select(video_path, unified_signals, duration, settings,
         except Exception as exc:  # noqa: BLE001 - metadata is best-effort
             print(f"Twitch VOD metadata skipped: {exc}")
 
-    if vod_meta and vod_meta.get("created_at") and event_callback:
+    if vod_meta and event_callback:
         from core.source_date import normalize_source_date
 
         source_date = normalize_source_date(vod_meta.get("created_at"))
-        if source_date:
+        streamer = vod_meta.get("streamer")
+        if source_date or streamer:
             event_callback(
                 "source_metadata",
                 "Reaction",
-                "Recording date recovered from Twitch VOD metadata.",
-                {"source_date": source_date},
+                "Recording details recovered from Twitch VOD metadata.",
+                {"source_date": source_date, "streamer": streamer},
             )
 
     game_segments = []
@@ -1552,6 +1553,57 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             finally:
                 print(f"Semantic judge stage timing: judge={time.monotonic() - judge_started:.1f}s")
 
+    # Keep judge: a 0-1 "would the creator keep this" score over the same
+    # finalists, on the same backend, calibrated with a few of the creator's
+    # own past decisions. The deck blend prefers it over the judge payoff
+    # (selection.SelectionTuning.blend_editorial_source).
+    keep_judge = None
+    if semantic_judge is not None and settings.get("keep_judge", True):
+        from core.database import DB_PATH
+        from core.keep_examples import select_keep_examples
+        from engines.semantic import keep_judge as keep_judge_mod
+
+        # The keep judge runs on the dedicated text model when one ships in
+        # models/llm. MEASURED 2026-10-13 on 379 reviewed clips: the same
+        # prompt ordered keeps at 0.674 on Qwen3-4B-Instruct-2507 but only
+        # 0.627 on the shared Qwen3.5-4B vision instance. Both resident at
+        # once (~4.3 GB vision + ~3.4 GB text) would not fit an 8 GB card, so
+        # the pass swaps: the vision instance is released first (it reloads
+        # lazily if the visual judge runs again) and the text model is
+        # released after.
+        keep_model_path = semantic_backend.resolve_model()
+        keep_backend = (
+            semantic_backend.LlamaBackend(keep_model_path) if keep_model_path else judge_backend
+        )
+        keep_swaps = keep_backend is not judge_backend and shared_vlm_backend is not None
+        keep_title = (vod_meta or {}).get("title") or settings.get("session_name")
+        keep_examples = select_keep_examples(
+            DB_PATH,
+            exclude_job_id=str(settings.get("job_id") or pipeline_settings.get("job_id") or "") or None,
+            streamer=(vod_meta or {}).get("streamer"),
+        )
+        print(f"Keep judge: {len(keep_examples)} creator example(s)")
+
+        def keep_judge(keep_candidates):
+            emit("Reaction", "Local model is weighing which moments you'd keep...", 0.646)
+            started = time.monotonic()
+            health = {}
+            if keep_swaps:
+                shared_vlm_backend.close()
+            try:
+                return keep_judge_mod.judge_keep(
+                    keep_candidates, judge_transcript,
+                    backend=keep_backend, title=keep_title, examples=keep_examples,
+                    cancel_check=cancel_check, health=health,
+                )
+            finally:
+                if keep_backend is not judge_backend:
+                    keep_backend.close()
+                print(
+                    f"Keep judge stage timing: keep={time.monotonic() - started:.1f}s "
+                    f"health={health}"
+                )
+
     # Visual judge + outcome sweep (content axis) is a standard best-effort
     # lane when a local VLM pair exists under models/vlm. It was measured
     # 2026-07-20 on 12 founder VODs
@@ -1681,6 +1733,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             visual_judge=visual_judge,
             outcome_sweep=outcome_sweep,
             ranker_diagnostics=ranker_diagnostics,
+            keep_judge=keep_judge,
         )
     finally:
         if visual_session is not None:

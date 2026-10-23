@@ -1508,6 +1508,13 @@ class JobManager:
                                 "UPDATE jobs SET source_date = ? WHERE id = ?",
                                 (source_date, job_id),
                             )
+                    streamer = str((payload or {}).get("streamer") or "").strip()[:100]
+                    if streamer:
+                        with self.db.get_connection() as conn:
+                            conn.cursor().execute(
+                                "UPDATE jobs SET streamer = ? WHERE id = ?",
+                                (streamer, job_id),
+                            )
                 if event_type in {"semantic_judge_health", "semantic_judge_degraded"}:
                     tel["semantic_judge_health"] = dict(payload or {})
                 elif event_type in {

@@ -1249,6 +1249,17 @@ def _migration_036_second_look_deck_wording(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_037_job_streamer(conn: sqlite3.Connection) -> None:
+    """Record which channel a scanned VOD belongs to.
+
+    The keep judge calibrates on the creator's past decisions, and examples
+    from the same channel measured better than recent ones from any channel
+    (0.674 vs 0.640 within-scan pairwise, 2026-10-13). NULL for local files
+    and for jobs scanned before this column existed.
+    """
+    _add_column(conn, "jobs", "streamer", "TEXT")
+
+
 MIGRATIONS: list[Migration] = [
     ("001_initial_schema", _migration_001_initial),
     ("002_job_telemetry", _migration_002_job_telemetry),
@@ -1286,6 +1297,7 @@ MIGRATIONS: list[Migration] = [
     ("034_compilation_muted_moments", _migration_034_compilation_muted_moments),
     ("035_clip_origin", _migration_035_clip_origin),
     ("036_second_look_deck_wording", _migration_036_second_look_deck_wording),
+    ("037_job_streamer", _migration_037_job_streamer),
 ]
 
 

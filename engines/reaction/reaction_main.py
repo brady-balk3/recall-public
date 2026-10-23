@@ -1729,6 +1729,14 @@ def _finalist_candidate_indices(
     for index in ranked:
         if selection_mod._creator_protected(candidates[index]):
             add(index)
+    # The visual judge has already read the seeds. One it called "post" goes
+    # ahead of the event lane: a Fortnite VOD has more elim/knock crops than
+    # finalist slots (167 for 80 on one measured scan), so they used to fill the
+    # pool first. A fight's unlabelled payoff crop then went unread by the
+    # text and keep judges, and the deck blend ranks unread candidates as 0.
+    for index in seed_indices:
+        if selection_mod._visual_verdict(candidates[index]) == "post":
+            add(index)
     for index in ranked:
         candidate = candidates[index]
         if (
@@ -1889,6 +1897,34 @@ def _causal_judge_windows(
     return result
 
 
+def _run_keep_judge(keep_judge, pool: List[dict], label: str) -> None:
+    """Attach ``semantic_keep_score`` to pool members that lack one.
+
+    Runs after both judges so the prompt can carry the visual summary. Each
+    candidate is attempted once per scan; failures leave the field absent and
+    selection falls back to the judge payoff.
+    """
+    if keep_judge is None:
+        return
+    targets = [
+        c for c in pool
+        if c.get("semantic_keep_score") is None and not c.get("_keep_judge_attempted")
+    ]
+    if not targets:
+        return
+    try:
+        scores = keep_judge(targets) or {}
+    except InterruptedError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - optional channel
+        print(f"Keep judge ({label}) skipped: {exc}")
+        scores = {}
+    for candidate in targets:
+        candidate["_keep_judge_attempted"] = True
+    for local_index, score in scores.items():
+        targets[local_index]["semantic_keep_score"] = float(score)
+
+
 def _apply_verdict(c: dict, verdict) -> None:
     c["semantic_hook"] = verdict.hook_strength
     c["semantic_self_contained"] = verdict.self_contained
@@ -1984,6 +2020,7 @@ def build_reaction_clips(
     visual_judge=None,
     outcome_sweep=None,
     ranker_diagnostics: Optional[dict] = None,
+    keep_judge=None,
 ):
     """Run the full reaction pipeline. Returns (ReactionCurve, List[ReactionClip]).
 
@@ -2008,6 +2045,11 @@ def build_reaction_clips(
     match win or a complete verbal beat earns that candidate past the arousal
     gates and lifts its rank. None -> content axis off, selection byte-
     identical to before.
+
+    ``keep_judge``: optional callable ``(candidates) -> Dict[int, float]``
+    (engines.semantic.keep_judge.judge_keep bound by the caller). It scores
+    the finalists the other judges read with a 0-1 keep probability that the
+    deck blend prefers over the judge payoff. None -> no keep scores.
     """
     settings = settings or {}
     # Auto-detected game id (engines.reaction.game_detect), never user-picked.
@@ -2609,6 +2651,9 @@ def build_reaction_clips(
             candidate["_judge_attempted"] = True
         for local_index, verdict in verdicts.items():
             _apply_verdict(missing_semantic[local_index], verdict)
+    _run_keep_judge(
+        keep_judge, [candidates[index] for index in finalist_indices], "finalists",
+    )
 
     if finalist_indices and (visual_judge is not None or semantic_judge is not None):
         visual_count = sum(
@@ -2888,6 +2933,7 @@ def build_reaction_clips(
                     candidate["_judge_attempted"] = True
                 for local_index, verdict in verdicts.items():
                     _apply_verdict(semantic_targets[local_index], verdict)
+            _run_keep_judge(keep_judge, coverage, "shared coverage")
 
             fully_evidenced = sum(
                 1 for candidate in coverage
@@ -3138,6 +3184,7 @@ def build_reaction_clips(
             "semantic_moment_type": c.get("semantic_moment_type"),
             "semantic_hook": _round_or_none(c.get("semantic_hook")),
             "semantic_payoff": _round_or_none(c.get("semantic_payoff")),
+            "semantic_keep_score": _round_or_none(c.get("semantic_keep_score")),
             "semantic_self_contained": _round_or_none(c.get("semantic_self_contained")),
             "housekeeping": bool(c.get("housekeeping")),
             "housekeeping_kind": c.get("housekeeping_kind"),
