@@ -881,6 +881,26 @@ PLATE_ROBUST_KEEP = 0.70
 # answer is adopted only when every side it found is a hard border. Measured
 # over 16 VODs: real plates scored >=19 on every side, avatar outlines <=7.5.
 PLATE_ROBUST_SIDE_MIN = 12.0
+# Every edge search above can still be won by a HUD: a borderless cam parked on
+# Fortnite's bottom-left stack (teammate list, health bars, lobby buttons) has no
+# border line of its own, so whichever stack is on screen most supplies the
+# "bottom". What does separate them is what each one shows: a webcam shows the
+# same room in nearly every frame, while a HUD is thin overlay on gameplay that
+# never holds still. Rows inside that cam agreed with their own median 0.4-1.0,
+# rows just outside 0.0, health bars included. Animated avatars and dark games
+# blur that cliff, so the stable block only TRIMS a refined side that crossed
+# a sharp one -- never grows a box, since a decorated window's static title bar
+# belongs to the block but not to the live feed.
+STABLE_SAMPLES = 40
+STABLE_ANALYSIS_W = 480
+STABLE_AGREE = 18            # max channel deviation from the median (0-255)
+STABLE_FRAME_SHARE = 0.70    # a pixel agreeing this often is stable
+STABLE_LINE_MIN = 0.25       # a row/column joins the block at this stable share
+STABLE_BAND = 3              # analysis px compared on each side of an edge
+STABLE_GAP = 2               # ...skipping this many just outside it (codec blur)
+STABLE_INSIDE_MIN = 0.40
+STABLE_OUTSIDE_MAX = 0.10    # real cams read 0.00-0.05 outside, decoys 0.11+
+STABLE_TRIM_TOL = 0.006      # a side past the block by less than this is kept
 
 
 def _persistent_edge_profiles(
@@ -1509,6 +1529,101 @@ def _robust_plate_is_hard(cv2, frames, claim, plate, width, height) -> bool:
     return True
 
 
+def _stable_window(claim: List[float], width: int, height: int) -> tuple:
+    """Pixel window the stable block may grow in: the claim plus RELOCATE_MARGIN."""
+    x, y, w, h = (float(v) for v in claim[:4])
+    mx, my = w * RELOCATE_MARGIN, h * RELOCATE_MARGIN
+    return (
+        max(0, int((x - mx) * width)), max(0, int((y - my) * height)),
+        min(width, int((x + w + mx) * width)), min(height, int((y + h + my) * height)),
+    )
+
+
+def _stable_block(cv2, crops, claim, window, width, height) -> Optional[List[float]]:
+    """The block of pixels that show the same thing in most frames, grown from
+    the claim's centre, or None unless every non-flush side is a sharp cliff.
+
+    ``crops`` are frames already cut to ``window`` (see _stable_window).
+    """
+    x0, y0, x1, y1 = window
+    if x1 - x0 < 16 or y1 - y0 < 16 or len(crops) < 5:
+        return None
+    # Never upsample: STABLE_BAND has to span real pixels, not codec blur.
+    scale = min(1.0, STABLE_ANALYSIS_W / float(x1 - x0))
+    size = (max(16, int(round((x1 - x0) * scale))), max(8, int(round((y1 - y0) * scale))))
+    stack = np.stack([
+        cv2.resize(crop, size, interpolation=cv2.INTER_AREA).astype(np.int16)
+        for crop in crops
+    ])
+    median_frame = np.median(stack, axis=0)
+    agree = np.abs(stack - median_frame).max(axis=3) < STABLE_AGREE
+    stable = agree.mean(axis=0) >= STABLE_FRAME_SHARE
+    rows, cols = stable.shape
+
+    x, y, w, h = (float(v) for v in claim[:4])
+    c0 = max(0, int(round((x * width - x0) * scale)))
+    c1 = min(cols, max(c0 + 2, int(round(((x + w) * width - x0) * scale))))
+    cy = min(rows - 1, max(0, int(round(((y + h / 2) * height - y0) * scale))))
+    if float(stable[cy, c0:c1].mean()) < STABLE_LINE_MIN:
+        return None
+    r0 = r1 = cy
+    while r0 > 0 and stable[r0 - 1, c0:c1].mean() >= STABLE_LINE_MIN:
+        r0 -= 1
+    while r1 < rows - 1 and stable[r1 + 1, c0:c1].mean() >= STABLE_LINE_MIN:
+        r1 += 1
+    q0 = q1 = (c0 + c1) // 2
+    while q0 > 0 and stable[r0:r1 + 1, q0 - 1].mean() >= STABLE_LINE_MIN:
+        q0 -= 1
+    while q1 < cols - 1 and stable[r0:r1 + 1, q1 + 1].mean() >= STABLE_LINE_MIN:
+        q1 += 1
+
+    b, g = STABLE_BAND, STABLE_GAP
+    sides = (
+        (r0 == 0 and y0 == 0,
+         stable[r0:r0 + b, q0:q1 + 1],
+         stable[max(0, r0 - g - b):max(0, r0 - g), q0:q1 + 1]),
+        (r1 == rows - 1 and y1 == height,
+         stable[r1 - b + 1:r1 + 1, q0:q1 + 1],
+         stable[r1 + 1 + g:r1 + 1 + g + b, q0:q1 + 1]),
+        (q0 == 0 and x0 == 0,
+         stable[r0:r1 + 1, q0:q0 + b],
+         stable[r0:r1 + 1, max(0, q0 - g - b):max(0, q0 - g)]),
+        (q1 == cols - 1 and x1 == width,
+         stable[r0:r1 + 1, q1 - b + 1:q1 + 1],
+         stable[r0:r1 + 1, q1 + 1 + g:q1 + 1 + g + b]),
+    )
+    for flush, inner, outer in sides:
+        if flush:
+            continue  # screen-clipped: the frame edge is the border
+        if not outer.size:
+            return None  # ran into the window: the block has no edge here
+        if float(inner.mean()) < STABLE_INSIDE_MIN or float(outer.mean()) > STABLE_OUTSIDE_MAX:
+            return None
+    return [
+        (x0 + q0 / scale) / width,
+        (y0 + r0 / scale) / height,
+        ((q1 + 1 - q0) / scale) / width,
+        ((r1 + 1 - r0) / scale) / height,
+    ]
+
+
+def _trim_to_stable_block(box: List[float], block: List[float]) -> List[float]:
+    """Pull in any side of ``box`` that reaches past ``block`` by more than
+    STABLE_TRIM_TOL; sides inside the block are left exactly where they are."""
+    left, top = float(box[0]), float(box[1])
+    right, bottom = left + float(box[2]), top + float(box[3])
+    b_right, b_bottom = block[0] + block[2], block[1] + block[3]
+    if left < block[0] - STABLE_TRIM_TOL:
+        left = block[0]
+    if top < block[1] - STABLE_TRIM_TOL:
+        top = block[1]
+    if right > b_right + STABLE_TRIM_TOL:
+        right = b_right
+    if bottom > b_bottom + STABLE_TRIM_TOL:
+        bottom = b_bottom
+    return [left, top, right - left, bottom - top]
+
+
 def _layout_sample_times(
     layout: FacecamLayout, duration: float, samples: int,
 ) -> List[float]:
@@ -1751,7 +1866,33 @@ def refine_layout_boxes(
             refined.append(dataclass_replace(
                 layout, box=[round(v, 4) for v in new_box],
             ))
-        return refined
+
+        # Last word goes to what the plate shows, not to the lines around it:
+        # a side the edge search pushed out across a stable/unstable cliff is
+        # pulled back to it. See STABLE_SAMPLES.
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if width <= 0 or height <= 0:
+            return refined
+        trimmed: List[FacecamLayout] = []
+        for layout, done in zip(layouts, refined):
+            window = _stable_window(layout.box, width, height)
+            x0, y0, x1, y1 = window
+            crops = [
+                frame[y0:y1, x0:x1]
+                for frame in _read_frames(
+                    _layout_sample_times(layout, duration, STABLE_SAMPLES))
+            ]
+            block = _stable_block(cv2, crops, layout.box, window, width, height)
+            if block is None:
+                trimmed.append(done)
+                continue
+            box = _trim_to_stable_block(done.box, block)
+            if box == [float(v) for v in done.box[:4]] or not _is_plausible_facecam(box):
+                trimmed.append(done)
+                continue
+            trimmed.append(dataclass_replace(done, box=[round(v, 4) for v in box]))
+        return trimmed
     except Exception:  # noqa: BLE001 - refinement must never block a scan
         return layouts
     finally:
