@@ -46,7 +46,7 @@
   transition: box-shadow var(--dur-2) ease;
 }
 .scanbar:focus-within { box-shadow: var(--lg-bevel), inset 0 0 0 1.5px var(--t1), 0 0 0 5px var(--fill); }
-.scanbar.ready { box-shadow: var(--lg-bevel), inset 0 0 0 1.5px var(--h2), 0 0 0 5px var(--heat-soft); }
+.scanbar.is-ready { box-shadow: var(--lg-bevel), inset 0 0 0 1.5px var(--h2), 0 0 0 5px var(--heat-soft); }
 .sbar-ic {
   width: 44px;
   height: 44px;

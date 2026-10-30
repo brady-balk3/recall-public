@@ -21,7 +21,7 @@ export function ScanBar({ onScanLink, onChooseFile }: { onScanLink: (url: string
 
   return (
     <>
-      <form className={`scanbar glass ${ready ? "ready" : ""}`} onSubmit={(event) => { event.preventDefault(); submit(); }}>
+      <form className={`scanbar glass ${ready ? "is-ready" : ""}`} onSubmit={(event) => { event.preventDefault(); submit(); }}>
         <span className="sbar-ic" aria-hidden="true"><Download /></span>
         <input
           className="sbar-in"
