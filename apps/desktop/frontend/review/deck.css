@@ -108,11 +108,20 @@
 .quick button[aria-label="Maybe"][aria-pressed="true"] { background: var(--maybe); color: #1a1405; }
 .quick button[aria-label="Pass"][aria-pressed="true"] { background: rgba(255, 255, 255, .85); color: #111; }
 .quick svg { width: 15px; height: 15px; }
-.dk-clip h3 { font-size: 14px; font-weight: 600; line-height: 1.3; letter-spacing: -.01em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dk-clip h3 { font-size: 14px; font-weight: 600; line-height: 1.3; letter-spacing: -.01em; overflow: hidden; white-space: nowrap; }
+.dk-title-line > span { display: block; overflow: hidden; text-overflow: ellipsis; }
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  /* Hold, glide linearly to the end, hold, glide back: a reading pace, not a ticker. */
+  .dk-clip:is(:hover, :focus-within) .dk-title-line[data-overflow] { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 12px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 12px), transparent); }
+  .dk-clip:is(:hover, :focus-within) .dk-title-line[data-overflow] > span { display: inline-block; overflow: visible; padding-right: 12px; animation: dk-title-scroll var(--scroll-s, 4s) linear .35s infinite alternate; }
+}
+@keyframes dk-title-scroll { 0%, 18% { transform: translateX(0); } 82%, 100% { transform: translateX(calc(var(--shift, 0px) - 12px)); } }
 .dk-clip .m { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12.5px; color: var(--t3); }
-.dk-open.is-high { color: var(--t1); }
-.dk-clip .hy { height: 3px; border-radius: 2px; background: var(--fill-2); overflow: hidden; }
-.dk-clip .hy i { display: block; height: 100%; border-radius: 2px; background: var(--heat); transform-origin: left center; }
+/* The card's divider carries the call, in the reaction curve's legend colours. */
+.dk-clip .dk-rule { height: 3px; border-radius: 2px; background: var(--fill-3); }
+.dk-clip.kept .dk-rule { background: var(--keep); }
+.dk-clip.maybe .dk-rule { background: var(--maybe); }
+.dk-clip.pass .dk-rule { background: var(--fill-2); }
 .dk-clip.pass .fr { filter: grayscale(1) brightness(.5); }
 .dk-clip.pass h3 { color: var(--t3); }
 .dk-clip.kept .fr { box-shadow: 0 0 0 2px var(--keep), 0 18px 40px rgba(0, 0, 0, .35); }

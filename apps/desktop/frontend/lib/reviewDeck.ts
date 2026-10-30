@@ -31,10 +31,3 @@ export const originalDeckClips = (clips: Clip[]) => clips.filter((clip) => !clip
 export const secondLookClips = (clips: Clip[]) => clips.filter((clip) => clip.isOverflowCandidate);
 export const primaryReviewDeckClips = (clips: Clip[]) =>
   sortReviewClips(originalDeckClips(clips), "recommended").slice(0, REVIEW_DECK_LIMIT);
-
-/** How fast a clip's opening grabs, from its hook score. Not overall quality. */
-export function openingBand(score: number) {
-  if (score >= 65) return { label: "Strong opening", shortLabel: "Strong", className: "is-high" };
-  if (score >= 45) return { label: "Good opening", shortLabel: "Good", className: "is-mid" };
-  return { label: "Slow build", shortLabel: "Slow build", className: "is-low" };
-}

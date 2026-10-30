@@ -67,7 +67,7 @@ import { PET_UNLOCK_2 } from "./pets/petArt";
 import { useAppMoments } from "./moments/useAppMoments";
 import { Celebration } from "./moments/Celebration";
 import { WeeklyRecap } from "./moments/WeeklyRecap";
-import { durationOf, hookScoreOf, openingBand, primaryReviewDeckClips, secondLookClips, sortReviewClips, type ReviewSort } from "./lib/reviewDeck";
+import { durationOf, primaryReviewDeckClips, secondLookClips, sortReviewClips, type ReviewSort } from "./lib/reviewDeck";
 import { applyAccent, applyCaptionColor } from "./theme/accent";
 import { AmbientGlow, GlassDefs, useGlassHighlight } from "./theme/ambient";
 import { buildScanRetryDraft } from "./lib/scanRecovery";
@@ -2271,7 +2271,6 @@ export function StudioTheaterView({
   const safeVideoTime = Math.max(0, Math.min(videoTime, activeVideoDuration));
   const seekPercent = activeVideoDuration > 0 ? (safeVideoTime / activeVideoDuration) * 100 : 0;
 
-  const score = clip ? hookScoreOf(clip) : 0;
   const savedSet = useMemo(() => new Set<string>(session?.savedClipIds ?? []), [session?.savedClipIds]);
   const postFirstClipId = useMemo(() => postFirstId(clips), [clips]);
   const passedIds = useMemo(
@@ -2289,7 +2288,6 @@ export function StudioTheaterView({
   const recommendation = clip
     ? editorialRecommendation(savedSet.has(clip.id), passedIds.has(clip.id), maybeIds.has(clip.id), priorityIds.has(clip.id))
     : { label: "", className: "" };
-  const opening = openingBand(score);
   const clues = clip ? creatorClues(clip) : [];
 
   const nextClips = useMemo(() => (index >= 0 ? clips.slice(index + 1, index + 8) : []), [clips, index]);
@@ -2615,7 +2613,6 @@ export function StudioTheaterView({
             <b className="theater-rank disp num">#{String(index + 1).padStart(2, "0")}</b>
           <div className="theater-editorial-row">
             <span className={`theater-recommendation ${recommendation.className}`}>{recommendation.label}</span>
-            <span className={`theater-opening ${opening.className}`} title="Opening strength, not overall clip quality">{opening.label}</span>
             {clip.momentType && (
               <span className="moment-type-badge">{momentLabel(clip.momentType)}</span>
             )}
@@ -2683,11 +2680,6 @@ export function StudioTheaterView({
           </div>
           <details className="theater-analysis">
             <summary>How Recall read this moment</summary>
-            <div className="theater-opening-detail">
-              <span>Opening signal</span>
-              <b>{score} / 100</b>
-              <small>This measures the first few seconds, not the clip's overall posting quality.</small>
-            </div>
             {clip.modalityBreakdown && <ModalityMix breakdown={clip.modalityBreakdown} />}
           </details>
           <p className="theater-filename-preview" title={exportNamePreview}>Saves as <span>{exportNamePreview}</span></p>
@@ -2844,9 +2836,8 @@ export function StudioTheaterView({
             <span className="theater-next-label">Up next</span>
             <div className="theater-next-row">
               {nextClips.map((c: Clip) => (
-                <button type="button" key={c.id} onClick={() => onSelect(c.id)} disabled={!!decision}>
+                <button type="button" key={c.id} onClick={() => onSelect(c.id)} disabled={!!decision} aria-label={`Up next: ${c.title || "Untitled moment"}`} title={c.title || undefined}>
                   <Poster clip={c} />
-                  <b>{openingBand(hookScoreOf(c)).shortLabel}</b>
                 </button>
               ))}
             </div>

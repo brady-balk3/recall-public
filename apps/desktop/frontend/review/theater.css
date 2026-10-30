@@ -10,8 +10,7 @@
 #view-theater .theater-meta .theater-vod-position-sep { color: var(--t4); }
 #view-theater .theater-time-row { font: 500 12px var(--f-ui); font-variant-numeric: tabular-nums; }
 
-#view-theater .theater-recommendation,
-#view-theater .theater-opening {
+#view-theater .theater-recommendation {
   min-height: 26px;
   padding: 0 11px;
   border: 0;
@@ -25,9 +24,6 @@
 #view-theater .theater-recommendation.is-kept { background: color-mix(in oklab, var(--keep) 18%, rgba(0, 0, 0, .4)); color: var(--keep); }
 #view-theater .theater-recommendation.is-maybe { background: color-mix(in oklab, var(--maybe) 18%, rgba(0, 0, 0, .4)); color: var(--maybe); }
 #view-theater .theater-recommendation.is-passed { color: var(--t3); }
-#view-theater .theater-opening.is-high,
-#view-theater .theater-opening.is-mid,
-#view-theater .theater-opening.is-low { color: var(--t2); border: 0; }
 
 #view-theater .theater-title-rename.btn { height: 30px; min-height: 0; padding: 0 12px; border: 0; background: transparent; color: var(--t3); font: 500 12.5px var(--f-ui); }
 #view-theater .theater-title-rename.btn:hover { background: var(--fill); color: var(--t1); }

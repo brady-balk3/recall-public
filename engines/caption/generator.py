@@ -92,21 +92,36 @@ def _clean_quote(tokens, max_words=8, max_chars=54):
     return text[0].upper() + text[1:]
 
 
-def _extract_quote(transcript, clip, pre=2.0, post=3.5):
-    """Pull what the streamer said around the clip's reaction peak as a title."""
-    if not transcript:
-        return None
-    peak = getattr(clip, "peak_timestamp", None)
-    center = peak if peak is not None else (clip.start + clip.end) / 2.0
-    lo = max(clip.start - 0.5, center - pre)
-    hi = min(clip.end + 0.5, center + post)
+def _words_between(transcript, lo, hi):
     words = []
     for seg in transcript.get("segments", []):
         for w in seg.get("words", []) or []:
             ws = float(w.get("start", 0.0))
             if lo <= ws <= hi:
                 words.append(str(w.get("word", "")))
-    return _clean_quote(words)
+    return words
+
+
+def _extract_quote(transcript, clip, pre=2.0, post=3.5):
+    """Pull what the streamer said around the clip's reaction peak as a title.
+
+    A peak that is a scream, a laugh, or game audio often has no usable words
+    in its few seconds, so the rest of the clip gets a pass before the title
+    falls back to an evidence label. The peak window still wins when it has one.
+    """
+    if not transcript:
+        return None
+    peak = getattr(clip, "peak_timestamp", None)
+    center = peak if peak is not None else (clip.start + clip.end) / 2.0
+    lo = max(clip.start - 0.5, center - pre)
+    hi = min(clip.end + 0.5, center + post)
+    quote = _clean_quote(_words_between(transcript, lo, hi))
+    if quote:
+        return quote
+    after = _clean_quote(_words_between(transcript, hi, clip.end))
+    if after:
+        return after
+    return _clean_quote(_words_between(transcript, clip.start, lo))
 
 
 # Short title prefix per non-gameplay scene.
@@ -151,6 +166,10 @@ def _clean_reason(reason: str) -> str:
     return reason[:1].upper() + reason[1:]
 
 
+def _is_sentence(text: str) -> bool:
+    return text.rstrip().endswith((".", ";")) or ":" in text
+
+
 def _quality_phrase(features: dict):
     agreement = float(features.get("signal_agreement", 0.0))
     dead_air = float(features.get("dead_air_ratio", 1.0))
@@ -175,7 +194,10 @@ def _build_title(clip: GameClip, story: GameStory):
     breakdown = clip.modality_breakdown or {}
     reason = clip.reason or ""
     clean_reason = _clean_reason(reason)
-    if clean_reason:
+    # A reason is a title only while it is a label ("Laughter/scream burst").
+    # Second-look and audit reasons are sentences about the deck, and every
+    # one of those clips would otherwise share the same title.
+    if clean_reason and not _is_sentence(clean_reason):
         return clean_reason
 
     game = _game_label(features, reason)

@@ -9,13 +9,13 @@
  * Previews cleared to save space say so, with the one action that brings them
  * back. The scan log folds in at the bottom.
  */
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { Poster } from "../components/Posters";
 import RecallOriginBadge from "../components/RecallOriginBadge";
 import { apiFetch } from "../lib/api";
 import { fmtClock, fmtDurationHuman } from "../lib/format";
 import { ArrowLeft, Check, Clock, Film, Info, Layers, Play, RefreshCw, Scissors, X } from "../lib/icons";
-import { durationOf, hookScoreOf, openingBand, primaryReviewDeckClips, secondLookClips, sortReviewClips, type ReviewSort } from "../lib/reviewDeck";
+import { durationOf, primaryReviewDeckClips, secondLookClips, sortReviewClips, type ReviewSort } from "../lib/reviewDeck";
 import { useJobStore, type Clip, type ReactionTimeline, type Session } from "../lib/store";
 import { timelinePath } from "../lib/timeline";
 import { MomentCurve } from "../ui/MomentCurve";
@@ -178,14 +178,12 @@ function DeckCard({ clip, index, rank, kept, onOpen, onKeep, onMaybe, onCut }: {
   onMaybe: (clip: Clip) => void;
   onCut: (clip: Clip) => void;
 }) {
-  const score = hookScoreOf(clip);
-  const opening = openingBand(score);
   const state = kept ? "kept" : clip.passed ? "pass" : clip.maybe ? "maybe" : "";
   const title = clip.title;
   return (
     <article className={`dk-clip ${state} ${rank ? "" : "second"}`} data-clip-id={clip.id} style={{ "--i": Math.min(index, 14) } as CSSProperties}>
       <div className="dk-media">
-      <button type="button" className="fr" onClick={() => onOpen(clip)} aria-label={`Open ${title}${rank ? `, pick ${rank}` : ", second look"}, ${opening.label}`}>
+      <button type="button" className="fr" onClick={() => onOpen(clip)} aria-label={`Open ${title}${rank ? `, pick ${rank}` : ", second look"}`}>
         <Poster clip={clip} className="rl-media" />
         <span className={`rank disp ${rank ? "" : "is-second"}`}>{rank ? String(rank).padStart(2, "0") : "+"}</span>
         <span className="dur num">{fmtClock(durationOf(clip))}</span>
@@ -203,14 +201,38 @@ function DeckCard({ clip, index, rank, kept, onOpen, onKeep, onMaybe, onCut }: {
         <button type="button" className="k" aria-pressed={kept} onClick={() => onKeep(clip)} title="Keep · Space" aria-label="Keep"><Check aria-hidden="true" /></button>
       </div>
       </div>
-      <h3>{title}</h3>
+      <ScrollTitle text={title} />
       <div className="m">
         <span className="num">{clip.timestamp}</span>
-        <span className={`dk-open ${opening.className}`} title="How fast the opening grabs, not overall quality">{opening.shortLabel}</span>
         <RecallOriginBadge provenance={clip.recallProvenance} compact />
       </div>
-      <div className="hy" aria-hidden="true"><i style={{ transform: `scaleX(${Math.max(0.04, Math.min(1, score / 100))})` }} /></div>
+      <div className="dk-rule" aria-hidden="true" />
     </article>
+  );
+}
+
+/** One line, always, so every card's meta row lines up. A title that doesn't
+ * fit ends in an ellipsis and scrolls through on hover or focus; the shift is
+ * measured, so short titles never move. */
+function ScrollTitle({ text }: { text: string }) {
+  const ref = useRef<HTMLHeadingElement>(null);
+  const [shift, setShift] = useState(0);
+  useLayoutEffect(() => {
+    const heading = ref.current;
+    const line = heading?.firstElementChild as HTMLElement | null;
+    if (!heading || !line) return;
+    const measure = () => setShift(Math.max(0, Math.ceil(line.scrollWidth - heading.clientWidth)));
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(heading);
+    return () => observer.disconnect();
+  }, [text]);
+  const style = shift ? { "--shift": `-${shift}px`, "--scroll-s": `${(2.4 + shift / 38).toFixed(2)}s` } as CSSProperties : undefined;
+  return (
+    <h3 ref={ref} className="dk-title-line" data-overflow={shift > 0 || undefined} title={shift ? text : undefined} style={style}>
+      <span>{text}</span>
+    </h3>
   );
 }
 
