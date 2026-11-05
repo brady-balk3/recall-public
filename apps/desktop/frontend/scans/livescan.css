@@ -4,6 +4,9 @@
    what Recall is doing, the stopped and cancelled states, the finished
    hand-off, and the shared scan log. */
 
+/* Breakpoints key off the page and stage widths, not the window: the sidebar
+   eats ~240px, so a 1200px window leaves the page under 900. */
+.livescan { container: livescan / inline-size; }
 .livescan .row { display: flex; align-items: center; gap: 10px; }
 .livescan .row.wrap { flex-wrap: wrap; }
 .ls-back { margin: 8px 0 14px -10px; }
@@ -12,7 +15,7 @@
 .ls-cancel:hover { color: var(--danger); }
 
 /* the stage: who, how far, and the stream strip */
-.ls-stage { display: grid; gap: 18px; padding: 26px 28px 24px; border-radius: 28px; }
+.ls-stage { container: ls-stage / inline-size; display: grid; gap: 18px; padding: 26px 28px 24px; border-radius: 28px; }
 .ls-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 28px; align-items: start; }
 .ls-id { min-width: 0; }
 .ls-id .eyebrow { display: inline-flex; align-items: center; gap: 8px; }
@@ -222,9 +225,22 @@
 .scanlog-body { padding: 0 0 14px; }
 .scanlog-body > p { margin: 0 0 6px; font-size: 13px; }
 
-@media (max-width: 1180px) { .ls-grid { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 900px) { .ls-head { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 760px) { .ls-step .nm, .ls-step .st { display: none; } }
+/* Too narrow for the aside beside the stage: it drops below, feed left, chips right. */
+@container livescan (max-width: 1100px) {
+  .ls-grid { grid-template-columns: minmax(0, 1fr); }
+  .ls-aside { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); align-items: start; }
+  .ls-aside > .ls-doing { grid-row: span 2; }
+}
+@container livescan (max-width: 640px) {
+  .ls-aside { grid-template-columns: minmax(0, 1fr); }
+  .ls-aside > .ls-doing { grid-row: auto; }
+}
+/* The title gets the full width; the ring, time left, and cancel sit in a row under it. */
+@container ls-stage (max-width: 760px) {
+  .ls-head { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .ls-vitals .ls-cancel, .ls-vitals .ls-review { margin-left: auto; }
+}
+@container ls-stage (max-width: 520px) { .ls-step .nm, .ls-step .st { display: none; } }
 @media (prefers-reduced-motion: reduce) {
   .ls-dot, .ls-pin, .ls-pin i, .ls-card, .ls-viz, .ls-review, .ls-ring .ok, .ls-card .play { animation: none; }
   .ls-ring .bar, .ls-read, .ls-beam, .ls-beam.is-hop, .ls-beam-tag, .ls-step .bar i, .ls-task .mb i, .ls-dl-fill, .ls-cand { transition: none; }

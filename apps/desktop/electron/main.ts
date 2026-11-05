@@ -10,9 +10,11 @@ import {
   globalShortcut,
   Notification,
   powerSaveBlocker,
+  screen,
   shell,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
+  type Rectangle,
 } from "electron";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -188,6 +190,40 @@ function writeStoredHotkey(accelerator: string | null): void {
     JSON.stringify({ accelerator }, null, 1),
     "utf-8",
   );
+}
+
+interface WindowState {
+  bounds?: Rectangle;
+  maximized: boolean;
+}
+
+function windowStateFile(): string {
+  return path.join(app.getPath("userData"), "window-state.json");
+}
+
+/** The window as the creator last left it. A first launch opens maximized:
+ *  1200x800 is too tight for the scan and review pages beside the sidebar. */
+function readWindowState(): WindowState {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(windowStateFile(), "utf-8")) as Partial<WindowState>;
+    const b = parsed.bounds;
+    const valid = b && [b.x, b.y, b.width, b.height].every((n) => Number.isFinite(n));
+    // A monitor that has since been unplugged would put the window off screen.
+    const visible = valid && screen.getAllDisplays().some(({ workArea: a }) =>
+      b.x < a.x + a.width && b.x + b.width > a.x && b.y < a.y + a.height && b.y + b.height > a.y);
+    return { bounds: visible ? b : undefined, maximized: parsed.maximized !== false };
+  } catch {
+    return { maximized: true };
+  }
+}
+
+function writeWindowState(target: BrowserWindow): void {
+  try {
+    const state: WindowState = { bounds: target.getNormalBounds(), maximized: target.isMaximized() };
+    fs.writeFileSync(windowStateFile(), JSON.stringify(state, null, 1), "utf-8");
+  } catch (error) {
+    console.error("Recall could not save the window size", error);
+  }
 }
 
 /** A bare key would swallow normal typing everywhere; require a modifier. */
@@ -677,9 +713,11 @@ function createWindow() {
     ? path.join(VITE_PUBLIC, "icon.ico")
     : path.join(RENDERER_DIST, "icon.ico");
 
+  const windowState = readWindowState();
   win = new BrowserWindow({
     width: 1200,
     height: 800,
+    ...windowState.bounds,
     minWidth: 1024,
     minHeight: 700,
     title: "Recall",
@@ -709,6 +747,7 @@ function createWindow() {
       revealTimer = null;
     }
     if (createdWindow.isDestroyed()) return;
+    if (windowState.maximized) createdWindow.maximize();
     createdWindow.show();
     createdWindow.focus();
     dismissSplash();
@@ -735,6 +774,7 @@ function createWindow() {
     );
     revealWindow();
   }, MAIN_WINDOW_REVEAL_TIMEOUT_MS);
+  win.on("close", () => writeWindowState(createdWindow));
   win.once("closed", () => {
     if (revealTimer) clearTimeout(revealTimer);
     revealTimer = null;
