@@ -2294,6 +2294,98 @@ small,
   text-align: center;
 }
 
+/* The stream's recording is gone: bring it back from here, and watch it come. */
+.theater-source {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(246,241,235,0.14);
+  border-radius: var(--studio-radius-md);
+  background: rgba(20,16,14,0.42);
+}
+
+.theater-source-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.theater-source-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.theater-source-text em {
+  color: var(--text-3);
+  font-style: normal;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.theater-source-row strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.theater-source-go,
+.theater-source-ghost {
+  flex: none;
+  padding: 5px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.theater-source-go {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #1b1310;
+}
+
+.theater-source-go:hover { background: color-mix(in srgb, var(--accent) 84%, #fff); }
+
+.theater-source-ghost {
+  border: 1px solid rgba(246,241,235,0.18);
+  background: transparent;
+  color: rgba(246,241,235,0.78);
+}
+
+.theater-source-ghost:hover { border-color: rgba(246,241,235,0.4); color: #fff; }
+
+.theater-source-bar {
+  height: 3px;
+  margin-top: 8px;
+  border-radius: 2px;
+  background: rgba(246,241,235,0.12);
+  overflow: hidden;
+}
+
+.theater-source-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 400ms ease-out;
+}
+
+.theater-source-note {
+  margin: 6px 0 0;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
 .theater-actions {
   justify-self: start;
   display: flex;

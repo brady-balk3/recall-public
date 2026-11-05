@@ -174,6 +174,10 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    # The Cutting Room sizes a streamed VOD from a 1-byte Range probe. Without
+    # these, a cross-origin renderer reads no Content-Range, the stream never
+    # seeds, and a clip opened from Export lands on an empty timeline.
+    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length"],
 )
 
 # Writable runtime data root. In dev this is <project_root>/data (same as

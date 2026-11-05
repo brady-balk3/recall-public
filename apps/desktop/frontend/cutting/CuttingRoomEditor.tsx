@@ -65,6 +65,7 @@ type SourceStatus = {
   restore_available: boolean;
   local_path?: string | null;
   last_error?: string | null;
+  restore_progress?: { progress: number; message: string } | null;
 };
 
 type SourceState = "checking" | "ready" | "missing" | "restoring" | "offline";
@@ -727,7 +728,7 @@ export default function CuttingRoomEditor({ session, sessions = [], onLoadSessio
           icon={<Download />}
           title={restoring ? "Restoring the stream" : "This stream isn't on your PC anymore"}
           body={error ?? (restoring
-            ? "Recall is downloading the original Twitch VOD. Your clips stay available while this finishes."
+            ? `Recall is downloading the original Twitch VOD${status?.restore_progress ? ` · ${Math.round(status.restore_progress.progress * 100)}% · ${status.restore_progress.message}` : ""}. Your clips stay available while this finishes.`
             : status?.restore_available
               ? "The download was removed to save space. Your clips are safe; restore it to cut more."
               : "The source recording isn't on disk. Clips you already made are unaffected.")}

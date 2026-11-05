@@ -56,6 +56,7 @@ import { ScansView } from "./scans/ScansView";
 import { HomeView } from "./home/HomeView";
 import { LibraryView } from "./library/LibraryView";
 import { ReviewIndex } from "./review/ReviewIndex";
+import { SourceRestoreStrip, useSourceRestore } from "./review/SourceRestore";
 import { ExportView } from "./export/ExportView";
 import { SettingsPage, type SettingsSection } from "./settings/SettingsPage";
 import { HypeMeter, PostingCoach, postFirstId } from "./review/PostingCoach";
@@ -2306,6 +2307,9 @@ export function StudioTheaterView({
   const nextEnd = storedEnd + trim.end;
   const trimDirty = trim.start !== 0 || trim.end !== 0;
   const trimmedDuration = Math.max(0, nextEnd - nextStart);
+  const apiEndpoint = useJobStore((state) => state.settings.apiEndpoint);
+  // A trim re-cuts from the recording, so look for it as soon as one is set up.
+  const sourceRestore = useSourceRestore(session?.id, apiEndpoint, trimDirty);
   const previewClipNumber = clip?.clipNumber ?? Math.max(1, index + 1);
   const previewMaxClipNumber = Math.max(
     previewClipNumber,
@@ -2380,6 +2384,11 @@ export function StudioTheaterView({
       await onTrim(clip, nextStart, nextEnd);
       setTrim({ start: 0, end: 0 });
     } catch (error) {
+      if ((error as { status?: number }).status === 409 && /restore/i.test((error as Error).message)) {
+        // The recording is gone: the download strip says so, with the way back.
+        sourceRestore.markMissing();
+        return;
+      }
       setTrimError(error instanceof Error && error.message !== "network"
         ? error.message
         : "Recall could not re-cut this clip.");
@@ -2389,6 +2398,11 @@ export function StudioTheaterView({
       focusTheater();
     }
   };
+
+  // The download a trim was waiting on landed: cut it now.
+  useEffect(() => {
+    if (sourceRestore.state === "ready" && trimDirty && !trimming) void applyTrim();
+  }, [sourceRestore.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const focusTheater = () => {
     videoRef.current?.blur();
@@ -2802,13 +2816,14 @@ export function StudioTheaterView({
             {trimDirty && (
               <div className="theater-trim-commit">
                 <button type="button" className="theater-trim-reset" onClick={resetTrim} disabled={trimming}>Reset</button>
-                <button type="button" className="theater-trim-apply" onClick={applyTrim} disabled={trimming}>
+                <button type="button" className="theater-trim-apply" onClick={applyTrim} disabled={trimming || sourceRestore.state === "missing" || sourceRestore.state === "restoring"}>
                   {trimming ? <><RefreshCw size={13} className="is-spinning" aria-hidden="true" />Re-cutting…</> : "Apply · Enter"}
                 </button>
               </div>
             )}
           </div>
           {trimError && <p className="theater-trim-error" role="alert">{trimError}</p>}
+          <SourceRestoreStrip restore={sourceRestore} pending={trimDirty} />
         </div>
 
         <div className="theater-actions glass-float">

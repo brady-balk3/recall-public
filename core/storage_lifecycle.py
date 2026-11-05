@@ -29,6 +29,9 @@ UNKNOWN_DOWNLOAD_ESTIMATE_BYTES = 4 * GIB
 _SOURCE_USE_LOCK = threading.RLock()
 _ACTIVE_SOURCE_KEYS: dict[str, int] = {}
 _RESTORE_CANCEL: dict[str, threading.Event] = {}
+# The running restore's last progress report, so a screen waiting on the
+# download can show it without reading session activity.
+_RESTORE_PROGRESS: dict[str, Dict[str, Any]] = {}
 
 
 def has_active_source_restores() -> bool:
@@ -499,6 +502,7 @@ class SourceLifecycleService:
             "restore_available": bool(row["restore_available"]),
             "last_error": row["last_error"],
             "sessions": sessions,
+            "restore_progress": dict(_RESTORE_PROGRESS[key]) if key in _RESTORE_PROGRESS else None,
         }
 
     def list_sources(self) -> list[Dict[str, Any]]:
@@ -589,6 +593,7 @@ class SourceLifecycleService:
         with _SOURCE_USE_LOCK:
             _ACTIVE_SOURCE_KEYS[source_key] = _ACTIVE_SOURCE_KEYS.get(source_key, 0) + 1
             _RESTORE_CANCEL[source_key] = cancel
+            _RESTORE_PROGRESS[source_key] = {"progress": 0.0, "message": "Starting the download"}
         with self.db.get_connection() as conn:
             linked = conn.execute(
                 "SELECT job_id FROM source_asset_sessions WHERE source_key = ? ORDER BY linked_at LIMIT 1",
@@ -621,6 +626,7 @@ class SourceLifecycleService:
                 def progress(message: str, value: float, _eta: Any = None) -> None:
                     if cancel.is_set():
                         raise InterruptedError("Source restoration cancelled")
+                    _RESTORE_PROGRESS[source_key] = {"progress": max(0.0, min(1.0, float(value or 0))), "message": message}
                     emit("source_restore_progress", message, value)
 
                 restored = resolve_input(
@@ -679,6 +685,7 @@ class SourceLifecycleService:
                     else:
                         _ACTIVE_SOURCE_KEYS.pop(source_key, None)
                     _RESTORE_CANCEL.pop(source_key, None)
+                    _RESTORE_PROGRESS.pop(source_key, None)
 
         threading.Thread(
             target=worker, name=f"recall-source-restore-{row['vod_id']}", daemon=True
