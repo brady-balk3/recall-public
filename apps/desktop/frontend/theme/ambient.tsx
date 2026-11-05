@@ -7,12 +7,16 @@
  * - <GlassDefs/>   the SVG edge-lens filter (#lg-lens) that .glass-float and
  *                  .glass-read refract through: neutral in the middle, bending
  *                  toward the rim. R carries horizontal shift, G vertical.
- * - <AmbientGlow/> black, lit from the top by a blurred wash of `image`,
- *                  cross-fading between two layers when the image changes.
+ * - <AmbientGlow/> the background. Dark: the dot field (theme/dotfield.ts), lit
+ *                  by `image`, the clips in view and the accent. Light: black
+ *                  ink on paper keeps the blurred wash of `image`, cross-fading
+ *                  between two layers when the image changes, plus grain.
  * - useGlassHighlight() one passive pointer listener that feeds --mx / --my to
  *                  whichever glass surface the cursor is over.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { accentDotRgb, type AccentChoice } from "./accent";
+import { DotField } from "./dotfield";
 
 const GLASS_SELECTOR = ".glass, .glass-float, .glass-read, .project-dialog, .settings-dialog, .hardware-setup-dialog, .queue-rail, .queue-detail";
 
@@ -44,11 +48,53 @@ export function GlassDefs() {
 }
 
 /**
- * The footage glow. `image` is any URL the renderer can load (a clip poster, a
- * session frame); undefined leaves the last glow in place rather than flashing
+ * The background. `image` is any URL the renderer can load (a clip poster, a
+ * session frame); undefined leaves the last one in place rather than flashing
  * to black between views.
  */
-export function AmbientGlow({ image }: { image?: string }) {
+export function AmbientGlow({ image, accent, theme, view }: { image?: string; accent: AccentChoice; theme: string; view: string }) {
+  const [held, setHeld] = useState(image);
+  useEffect(() => { if (image) setHeld(image); }, [image]);
+  useEffect(() => {
+    if (held) document.documentElement.style.setProperty("--amb-url", `url("${held}")`);
+  }, [held]);
+  return theme === "light" ? <FootageGlow image={image} /> : <DotGround image={image ?? held} accent={accent} view={view} />;
+}
+
+/**
+ * Layout effects, not passive ones: they run after the new view is in the DOM
+ * but before the browser paints it, so the new view's field is in place for the
+ * very first frame it shows in.
+ */
+function DotGround({ image, accent, view }: { image?: string; accent: AccentChoice; view: string }) {
+  const host = useRef<HTMLDivElement>(null);
+  const field = useRef<DotField | null>(null);
+  const lastView = useRef(view);
+  const dot = accentDotRgb(accent);
+  const dotKey = dot.join();
+
+  useLayoutEffect(() => {
+    if (!host.current) return;
+    field.current = new DotField(host.current, { frameUrl: image, dot });
+    return () => { field.current?.destroy(); field.current = null; };
+    // created once; later changes go through update() below
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useLayoutEffect(() => { field.current?.update({ frameUrl: image, dot }); }, [image, dotKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    if (view === lastView.current) return;
+    lastView.current = view;
+    field.current?.viewChanged();
+  }, [view]);
+
+  return (
+    <div id="ambient" aria-hidden="true">
+      <div className="amb-dots" ref={host} />
+    </div>
+  );
+}
+
+function FootageGlow({ image }: { image?: string }) {
   const [layers, setLayers] = useState<[string | undefined, string | undefined]>([image, undefined]);
   const [front, setFront] = useState(0);
   const current = layers[front];
@@ -63,10 +109,6 @@ export function AmbientGlow({ image }: { image?: string }) {
     });
     setFront(back);
   }, [image, current, front]);
-
-  useEffect(() => {
-    if (current) document.documentElement.style.setProperty("--amb-url", `url("${current}")`);
-  }, [current]);
 
   return (
     <div id="ambient" aria-hidden="true">

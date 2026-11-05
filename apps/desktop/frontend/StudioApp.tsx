@@ -430,7 +430,7 @@ export default function StudioApp() {
   }, [jobs, shellCountsNow.scan]);
 
   useGlassHighlight();
-  // The footage glow follows what's on screen: the open session, else the newest one.
+  // The background is lit by what's on screen: the open session, else the newest one.
   const ambientSession = activeSession ?? sortedSessions[0];
   const ambientImage = ambientSession ? pickSessionPosterClip(ambientSession)?.thumbUrl : undefined;
 
@@ -1575,7 +1575,7 @@ export default function StudioApp() {
   return (
     <>
       <GlassDefs />
-      <AmbientGlow image={ambientImage} />
+      <AmbientGlow image={ambientImage} accent={settings.accent} theme={settings.theme || "dark"} view={settingsOpen ? "settings" : view} />
       <WindowChrome />
       <PetLayer keepers={shellCountsNow.keepers} scanning={!!shellCountsNow.scan} focus={petsStayHome} hidden={view === "theater"} />
       <Celebration onOpenCrew={() => openSettings("crew")} />

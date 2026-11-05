@@ -8,9 +8,9 @@
    - .glass-read   anything you read or type in (Ctrl K, dialogs, menus): thick, dark
    All three pick up a cursor-tracked highlight from --mx / --my (theme/ambient.tsx).
 
-   The background is black, lit from the top by a blurred wash of whatever is on
-   screen (#ambient), plus fine grain. Full-window views (.glow-opaque) are opaque
-   and carry their own copy of the glow. */
+   The background (#ambient) is black. Dark: a dot field lit by what's on screen
+   (theme/dotfield.ts). Light: a blurred wash of the frame plus fine grain.
+   Full-window views (.glow-opaque) are opaque and carry their own copy of the glow. */
 
 .glass,
 .glass-float,
@@ -83,6 +83,42 @@
 }
 :root[data-theme="light"] .amb-grain { mix-blend-mode: multiply; }
 
+/* dark: the dot field. One tall layer the length of the open view; dotfield.ts
+   moves it with the scroll (transform only). Each pixel of .dot-cells is one 4px
+   cell, scaled up pixelated; the mask cuts it to a centred 2px square. */
+#ambient .amb-dots { position: absolute; left: 0; top: 0; width: 100%; will-change: transform; }
+#ambient .amb-dots canvas { position: absolute; left: 0; top: 0; display: block; }
+/* One sheet per view (dotfield.ts). Switching views cuts to that view's sheet in
+   the same frame; only changes within a view (posters finishing loading, the page
+   growing) crossfade. Sheets not in use are hidden, so they cost no compositing. */
+#ambient .dot-sheet { position: absolute; left: 0; top: 0; width: 100%; opacity: 0; transition: opacity 320ms ease; }
+#ambient .dot-sheet[hidden] { display: none; }
+#ambient .dot-sheet.is-front { opacity: 1; }
+#ambient .dot-sheet.is-cut { transition: none; }
+
+/* Always-on motion. Each sheet holds the still field (.dot-rest) and, once built
+   in the background, .dot-motion: a stack of states with the light a step further
+   along a slow loop. dotfield.ts fades each state in over the one below in turn
+   (Web Animations, opacity only, stepped to ~10 updates a second so the glass
+   above isn't made to re-blur every frame). Every state's wash is opaque, so each
+   fade is a true crossfade. The whole stack fades in over the still field once
+   it's ready; with reduced motion it's never built. */
+#ambient .dot-layer { position: absolute; left: 0; top: 0; width: 100%; }
+#ambient .dot-motion { position: absolute; left: 0; top: 0; width: 100%; opacity: 0; transition: opacity 1.2s ease; }
+#ambient .dot-sheet.is-alive .dot-motion { opacity: 1; }
+#ambient .dot-state { will-change: opacity; }
+#ambient .dot-state:not(:first-child) { opacity: 0; }
+#ambient .dot-cells {
+  image-rendering: pixelated;
+  --dot-cut: linear-gradient(90deg, transparent 1px, #000 1px, #000 3px, transparent 3px), linear-gradient(transparent 1px, #000 1px, #000 3px, transparent 3px);
+  -webkit-mask-image: var(--dot-cut);
+  -webkit-mask-size: 4px 4px;
+  -webkit-mask-composite: source-in;
+  mask-image: var(--dot-cut);
+  mask-size: 4px 4px;
+  mask-composite: intersect;
+}
+
 /* full-window views: opaque, with their own glow behind them */
 .glow-opaque {
   position: relative;
@@ -107,4 +143,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   #ambient .amb-layer { transition-duration: 300ms; }
+  #ambient .dot-sheet { transition: none; }
+  #ambient .dot-motion { display: none; }
 }

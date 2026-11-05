@@ -60,11 +60,9 @@ export function accentOklch(accent: Accent, lightnessDelta = 0, chromaScale = 1)
   return `oklch(${l.toFixed(3)} ${c.toFixed(3)} ${wrapHue(accent.hue).toFixed(1)})`;
 }
 
-/** sRGB hex for an accent (gamut-clipped), for readouts and non-CSS consumers. */
-export function accentHex(accent: Accent): string {
-  const L = lightnessOf(accent.brightness);
-  const C = chromaOf(accent.intensity);
-  const h = (wrapHue(accent.hue) * Math.PI) / 180;
+/** OKLCH to gamut-clipped 8-bit sRGB. */
+function oklchToRgb(L: number, C: number, hue: number): [number, number, number] {
+  const h = (wrapHue(hue) * Math.PI) / 180;
   const a = C * Math.cos(h);
   const b = C * Math.sin(h);
   const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
@@ -78,16 +76,28 @@ export function accentHex(accent: Accent): string {
     -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
     -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
   ];
-  return (
-    "#" +
-    linear
-      .map((v) => {
-        const encoded = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(Math.max(v, 0), 1 / 2.4) - 0.055;
-        return Math.round(clamp(encoded, 0, 1) * 255).toString(16).padStart(2, "0");
-      })
-      .join("")
-      .toUpperCase()
-  );
+  const [r, g, bl] = linear.map((v) => {
+    const encoded = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(Math.max(v, 0), 1 / 2.4) - 0.055;
+    return Math.round(clamp(encoded, 0, 1) * 255);
+  });
+  return [r, g, bl];
+}
+
+/** sRGB hex for an accent (gamut-clipped), for readouts and non-CSS consumers. */
+export function accentHex(accent: Accent): string {
+  const rgb = oklchToRgb(lightnessOf(accent.brightness), chromaOf(accent.intensity), accent.hue);
+  return "#" + rgb.map((v) => v.toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+
+/**
+ * The background dot color (theme/dotfield.ts): a step darker and a little less
+ * vivid than the accent, so the field stays calm under the UI. Black and white
+ * gets a mid grey.
+ */
+export function accentDotRgb(accent: AccentChoice): [number, number, number] {
+  if (!accent) return oklchToRgb(0.62, 0, 0);
+  const L = clamp(lightnessOf(accent.brightness) - 0.06, 0.5, 0.7);
+  return oklchToRgb(L, chromaOf(accent.intensity) * 0.85, accent.hue);
 }
 
 /** Text color that reads on an accent fill. */
