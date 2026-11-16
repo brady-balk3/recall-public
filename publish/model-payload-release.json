@@ -13,6 +13,15 @@
       ]
     },
     {
+      "path": "vision/isnetis.onnx",
+      "sha256": "f15622d853e8260172812b657053460e20806f04b9e05147d49af7bed31a6e99",
+      "role": "asset",
+      "notices": [
+        "notices/Apache-2.0.txt",
+        "notices/AnimeSeg.ATTRIBUTION.txt"
+      ]
+    },
+    {
       "path": "face/face_landmarker.task",
       "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
       "role": "asset",
@@ -215,6 +224,11 @@
     {
       "path": "memory/all-minilm-l6-v2/LICENSE",
       "sha256": "1e66d43b04a3f2428303ad3316d1fbb996991541192892b22d21f0065a093b2b",
+      "role": "notice"
+    },
+    {
+      "path": "notices/AnimeSeg.ATTRIBUTION.txt",
+      "sha256": "c47ef30d98a56b8fffd7d415a4c07189af1940660278b2d26aa4f350b923c9c0",
       "role": "notice"
     },
     {

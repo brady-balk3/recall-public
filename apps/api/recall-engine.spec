@@ -306,6 +306,22 @@ if not os.path.exists(_person_model):
         "scripts/fetch_person_model.py before packaging."
     )
 datas.append((str(_model_payload.verify_source(_person_model, asset=True)), os.path.join("models", "vision")))
+
+# VTuber avatar matting weights (SkyTNT anime-segmentation ISNet, Apache-2.0).
+# Optional at run time -- avatar_matting.available() is False without them and
+# the cut-out quietly falls back to a GrabCut still mask -- so, like YAMNet and
+# the judges, the BUILD fails instead of shipping that worse cut-out. Installed
+# builds then drop it from the bundle and setup downloads it (core/installer_models.py);
+# portable builds keep it. Resolved by name, the same way the engine does.
+from engines.vision.avatar_matting import MODEL_NAME as _AVATAR_MATTING_MODEL_NAME
+
+_avatar_matting_model = os.path.join(PROJECT_ROOT, "models", "vision", _AVATAR_MATTING_MODEL_NAME)
+if not os.path.exists(_avatar_matting_model):
+    raise FileNotFoundError(
+        f"Expected avatar matting weights at {_avatar_matting_model}. Fetch them with "
+        "scripts/fetch_models.py --all before packaging."
+    )
+datas.append((str(_model_payload.verify_source(_avatar_matting_model, asset=True)), os.path.join("models", "vision")))
 # A base ranker is optional: Recall intentionally stays on its deterministic
 # heuristic until a real-data v5 base has earned shipping. Never make a package
 # build depend on the removed synthetic/stale model.

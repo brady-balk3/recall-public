@@ -22,6 +22,9 @@ TIERS
             use the installer's pinned Hugging Face revisions and checksums;
             --all downloads them automatically, along with the bundled OCR,
             face, and audio-event assets. Fetching does not establish release readiness.
+
+The avatar matting model (optional tier) is also installer-downloaded, so --all
+fetches it from the same pinned revision and checksum setup uses.
 """
 
 from __future__ import annotations
@@ -83,12 +86,12 @@ class Model:
         return missing
 
 
-def installer_judge(name, prefix, note):
+def installer_download(name, prefix, note, tier="packaging"):
     """Use exactly the same filenames, revisions and hashes as installed setup."""
     group = next(group for group in download_groups()
                  if all(spec[0].startswith(prefix + "/") for spec in group[2].values()))
     artifacts = {relative: (size, digest) for relative, size, digest in group[2].values()}
-    return Model(name, "packaging", list(artifacts), note=note,
+    return Model(name, tier, list(artifacts), note=note,
                  artifacts=artifacts, download_group=group)
 
 
@@ -136,6 +139,9 @@ MODEL_SET = [
           script="fetch_small_release_assets.py", script_args=("--group", "yamnet"),
           artifacts={name: (size, digest) for name, _repo, _revision, size, digest in YAMNET},
           note="laughter/scream channel; the reaction engine fuses without it"),
+    installer_download("VTuber avatar matting (anime-segmentation ISNet, Apache-2.0)", "vision",
+                       "VTuber cut-out; falls back to a GrabCut still mask without it",
+                       tier="optional"),
     Model("Face Landmarker (MediaPipe, Apache-2.0)", "packaging",
           ["face/face_landmarker.task"],
           script="fetch_small_release_assets.py", script_args=("--group", "face"),
@@ -149,10 +155,10 @@ MODEL_SET = [
                      for model, (_revision, files) in OCR_MODELS.items()
                      for name, size, digest, _upstream in files},
           note="bundled OCR detection and recognition"),
-    installer_judge("Semantic judge (Qwen3-4B-Instruct-2507 GGUF, Apache-2.0)", "llm",
-                    "runtime-optional: the judge disables itself when absent"),
-    installer_judge("Visual judge (Qwen3.5-4B GGUF + mmproj, Apache-2.0)", "vlm",
-                    "runtime-optional: visual review needs both the model and projection"),
+    installer_download("Semantic judge (Qwen3-4B-Instruct-2507 GGUF, Apache-2.0)", "llm",
+                       "runtime-optional: the judge disables itself when absent"),
+    installer_download("Visual judge (Qwen3.5-4B GGUF + mmproj, Apache-2.0)", "vlm",
+                       "runtime-optional: visual review needs both the model and projection"),
 ]
 
 TIER_ORDER = {"runtime": 0, "optional": 1, "packaging": 2}

@@ -14,6 +14,15 @@ from core.model_catalog import ASR_REPO, ASR_REVISION, ASR_FILES
 from core.model_catalog import ALIGNER_REPO, ALIGNER_REVISION, ALIGNER_FILES
 from core.model_downloads import install_files, matches
 
+# SkyTNT anime-segmentation ISNet (Apache-2.0; notices/AnimeSeg.ATTRIBUTION.txt).
+# At 176 MB it is several times the largest bundled model (YOLOX-s, 36 MB), so
+# installed setup fetches it with the other large models; portable builds bundle it.
+AVATAR_MATTING_REPO = "skytnt/anime-seg"
+AVATAR_MATTING_REVISION = "493cb60893f47441b26ec4fb9a306bce9e342982"
+AVATAR_MATTING_FILES = {
+    "isnetis.onnx": (176069933, "f15622d853e8260172812b657053460e20806f04b9e05147d49af7bed31a6e99"),
+}
+
 
 def download_groups():
     # remote filename -> (installed relative filename, byte count, SHA256)
@@ -37,6 +46,9 @@ def download_groups():
             "Qwen3.5-4B-Q4_K_M.gguf": (2740937888, "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"),
             "mmproj-F16.gguf": (672423616, "cd88edcf8d031894960bb0c9c5b9b7e1fea6ebee02b9f7ce925a00d12891f864"),
         }, "vlm/qwen3.5-4b"),
+        # VTuber avatar cut-out (engines/vision/avatar_matting.py). Optional at
+        # run time: without it the cut-out keys with a GrabCut still mask.
+        group(AVATAR_MATTING_REPO, AVATAR_MATTING_REVISION, AVATAR_MATTING_FILES, "vision"),
     )
 
 
