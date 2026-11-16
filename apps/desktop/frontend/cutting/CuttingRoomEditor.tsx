@@ -353,9 +353,13 @@ export default function CuttingRoomEditor({ session, sessions = [], onLoadSessio
     style: {
       fontFamily: captionStyle?.font || "Arial Black",
       color: captionStyle?.textColor || "#FFFFFF",
+      highlightColor: captionStyle?.highlightColor,
       size: captionStyle?.size || "medium",
       position: captionStyle?.position || "bottom",
     },
+    // Both facecam layouts put the cam at the top; the render then moves a top caption to mid-frame.
+    topFacecam: framing.layout === "vertical_split" || framing.layout === "gameplay_pip"
+      || (framing.layout === "auto" && !!framing.facecam),
     loadWords: async (ref, start, end, listen) => {
       const response = await apiFetch(`/jobs/${encodeURIComponent(jobIdOf(ref))}/captions/window`, {
         method: "POST",
@@ -368,7 +372,7 @@ export default function CuttingRoomEditor({ session, sessions = [], onLoadSessio
       }
       return response.json();
     },
-  }), [captionsOn, captionStyle, apiEndpoint]);
+  }), [captionsOn, captionStyle, apiEndpoint, framing.layout, framing.facecam]);
 
   const host = useMemo<RecallEditorHost>(() => (session ? {
     layout: {

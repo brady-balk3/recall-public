@@ -176,7 +176,7 @@ export function captionText(words: RecallCaptionWord[]): string {
 	return words.map((word) => word.word.trim()).filter(Boolean).join(" ");
 }
 
-interface CaptionPiece {
+export interface CaptionPiece {
 	trackId: string;
 	element: VideoElement;
 	asset: MediaAsset;
@@ -186,7 +186,7 @@ interface CaptionPiece {
 }
 
 /** Every piece that has words to show: a trimmed stream element with captions stored. */
-function captionPieces(editor: EditorCore): CaptionPiece[] {
+export function captionPieces(editor: EditorCore): CaptionPiece[] {
 	const scene = editor.scenes.getActiveSceneOrNull();
 	if (!scene) return [];
 	const assets = new Map(editor.media.getAssets().map((asset) => [asset.id, asset]));
@@ -287,10 +287,14 @@ export function applyCaptionTrack(editor: EditorCore, style: SubtitleStyleOverri
 		}
 	}
 
+	// Hidden from the preview: caption-overlay.tsx draws the burned-in look
+	// (outline, highlighted word), which a text element cannot. The track stays
+	// so the cues still show as blocks on the timeline.
 	const next: TextTrack | null = elements.length
-		? { id: CAPTION_TRACK_ID, type: "text", name: CAPTION_TRACK_NAME, elements, hidden: false }
+		? { id: CAPTION_TRACK_ID, type: "text", name: CAPTION_TRACK_NAME, elements, hidden: true }
 		: null;
-	if (signature(existing) === signature(next) && (!next || scene.tracks.overlay[0]?.id === CAPTION_TRACK_ID)) return false;
+	if (signature(existing) === signature(next) && existing?.hidden === next?.hidden
+		&& (!next || scene.tracks.overlay[0]?.id === CAPTION_TRACK_ID)) return false;
 	const overlay = scene.tracks.overlay.filter((track) => !isCaptionTrack(track));
 	// Captions draw over everything else, like the burned-in ones.
 	editor.timeline.updateTracks({ ...scene.tracks, overlay: next ? [next, ...overlay] : overlay });

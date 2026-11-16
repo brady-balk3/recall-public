@@ -17,6 +17,8 @@ export interface RecallCaptionWord {
 export interface RecallCaptionStyle {
 	fontFamily: string;
 	color: string;
+	/** The word being spoken. Absent: the engine's default yellow. */
+	highlightColor?: string;
 	size: "small" | "medium" | "large";
 	position: "top" | "middle" | "bottom";
 }
@@ -101,6 +103,8 @@ export interface RecallCaptionTrackHost {
 	/** Captions are burned into the clips made here. */
 	enabled: boolean;
 	style: RecallCaptionStyle;
+	/** The clip has a facecam band at the top (a top caption then sits mid-frame, as rendered). */
+	topFacecam?: boolean;
 	/**
 	 * The words a clip of [start, end] of this stream would show, clip-relative.
 	 * `listen` decodes the audio when the scan has no words there (uses the GPU).

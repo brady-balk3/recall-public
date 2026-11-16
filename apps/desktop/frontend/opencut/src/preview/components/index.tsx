@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRecallHost } from "@opencut/recall/host";
 import { publishSourceFrames } from "@opencut/recall/source-frames";
 import { CutoutOverlay } from "@opencut/recall/cutout-overlay";
+import { CaptionOverlay } from "@opencut/recall/caption-overlay";
 import useDeepCompareEffect from "use-deep-compare-effect";
 import { useEditor } from "@opencut/editor/use-editor";
 import { useRafLoop } from "@opencut/hooks/use-raf-loop";
@@ -316,6 +317,7 @@ function PreviewCanvas({
 
 	const recallOverlay = useRecallHost().previewOverlay;
 	const recallCutout = useRecallHost().cutout;
+	const recallCaptions = useRecallHost().captionTrack;
 	return (
 		<PreviewViewportProvider value={viewport}>
 			<div className="flex size-full min-h-0 min-w-0 flex-col">
@@ -353,6 +355,21 @@ function PreviewCanvas({
 										}}
 									>
 										<CutoutOverlay cutout={recallCutout} canvasWidth={nativeWidth ?? 1080} />
+									</div>
+								)}
+								{recallCaptions?.enabled && (
+									// Recall: the burned-in captions, drawn over the clip like the render does.
+									<div
+										className="pointer-events-none absolute"
+										style={{
+											left: viewport.sceneLeft,
+											top: viewport.sceneTop,
+											width: viewport.sceneWidth,
+											height: viewport.sceneHeight,
+											overflow: "hidden",
+										}}
+									>
+										<CaptionOverlay captions={recallCaptions} />
 									</div>
 								)}
 								<PreviewOverlayLayer
