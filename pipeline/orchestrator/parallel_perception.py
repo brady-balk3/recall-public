@@ -19,11 +19,12 @@ do decode and motion, so workers remain single-CPU-thread pinned in both modes.
 Emotion is folded in here (one decode), removing the separate second decode pass.
 """
 
+import contextlib
 import os
 import sys
 import multiprocessing
 import time
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, as_completed, wait
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 
 from core.process_governor import get_recall_env
 
@@ -31,6 +32,12 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 _HEARTBEAT_SOURCE_SECONDS = 5.0
 _HEARTBEAT_EMIT_SECONDS = 5.0
 _RATE_WINDOW_SECONDS = 120.0
+# Footage a slice after the first decodes before its start, only to rebuild
+# the tracking state the previous slice had. MEASURED 2026-11-16 on 5 cached
+# quality scans, where a face was tracked just before the point: the face
+# track dropped right after 4 of 22 slice boundaries (18%) vs 2.4% of random
+# points, recovering in 7-22 s. The facecam box itself carried over.
+_SLICE_WARMUP_SECONDS = 30.0
 
 # Worker liveness watchdog (resource plan pkg 3). Workers publish a source
 # timestamp at least every _HEARTBEAT_SOURCE_SECONDS of footage; a worker
@@ -45,6 +52,61 @@ _STALL_FAIL_SECONDS = float(get_recall_env("RECALL_WORKER_STALL_FAIL_SEC", "1800
 
 class WorkerStallError(RuntimeError):
     """A perception worker stopped making progress past the hard timeout."""
+
+
+def _stop_workers(ex):
+    """Kill a pool's worker processes now, running tasks included.
+
+    Leaving a ``with ProcessPoolExecutor`` block calls shutdown(wait=True),
+    which waits for every running slice to finish: minutes after a cancel, and
+    forever on a hung worker. Neither an executor nor a future can stop a task
+    that has started, so this terminates the processes; the executor then
+    finds its pool broken and the block's shutdown returns at once. Workers
+    only return results to this process, which writes every cache file after
+    the pool is done, so a killed worker leaves nothing half-written.
+
+    Python 3.14 has ``terminate_workers`` for exactly this. Recall ships 3.12,
+    where the only handle on the processes is the private ``_processes``. The
+    stall path already relied on it; both paths now share this one place, so a
+    Python upgrade changes one function. ``shutdown(wait=False)`` is not used
+    first: it clears ``_processes`` without stopping anything.
+    """
+    terminate = getattr(ex, "terminate_workers", None)
+    if callable(terminate):
+        try:
+            terminate()
+            return
+        except Exception:  # noqa: BLE001 - fall through to the private handle
+            pass
+    processes = list((getattr(ex, "_processes", None) or {}).values())
+    for proc in processes:
+        try:
+            proc.terminate()
+        except Exception:  # noqa: BLE001 - already gone
+            pass
+    for proc in processes:
+        try:
+            proc.join(timeout=5.0)
+        except Exception:  # noqa: BLE001 - already gone
+            pass
+
+
+@contextlib.contextmanager
+def _worker_pool(n_workers):
+    """A ProcessPoolExecutor that is waited for only when its block succeeds.
+
+    When the block raises -- a cancel, a stall, a worker's exception -- the
+    workers are killed first (_stop_workers) and the exception propagates
+    untouched, InterruptedError included.
+    """
+    ex = ProcessPoolExecutor(max_workers=n_workers)
+    try:
+        yield ex
+    except BaseException:
+        _stop_workers(ex)
+        ex.shutdown(wait=True, cancel_futures=True)
+        raise
+    ex.shutdown(wait=True)
 
 
 def _missing_ranges(covered_secs, duration, min_gap=30.0):
@@ -87,12 +149,51 @@ def _worker_setup_paths():
         sys.path.insert(0, _PROJECT_ROOT)
 
 
+def _pin_onnxruntime_threads(ort):
+    """Make every onnxruntime session in this process use 1 intra-op thread.
+
+    Patching the SessionOptions factory reaches only libraries that build
+    options (PaddleOCR). The person detector and HSEmotion pass none, so they
+    got onnxruntime's default of one thread per core and a CPU worker averaged
+    3.0 cores (MEASURED 2026-11-15). The session subclass gives those the same
+    pinned options. Idempotent: a reused pool process runs this once per slice.
+    """
+    if getattr(ort, "_recall_single_thread", False):
+        return
+    orig_options = ort.SessionOptions
+    orig_session = ort.InferenceSession
+
+    def _single_thread_so():
+        o = orig_options()
+        try:
+            o.intra_op_num_threads = 1
+            o.inter_op_num_threads = 1
+        except Exception:
+            pass
+        return o
+
+    class _SingleThreadSession(orig_session):
+        def __init__(self, path_or_bytes, sess_options=None, *args, **kwargs):
+            if sess_options is None:
+                sess_options = _single_thread_so()
+            super().__init__(path_or_bytes, sess_options, *args, **kwargs)
+
+    ort.SessionOptions = _single_thread_so
+    ort.InferenceSession = _SingleThreadSession
+    ort._recall_single_thread = True
+
+
 def _perceive_chunk(payload):
     """Worker: perceive one [start, end) slice in a fresh process.
 
-    CRITICAL: pin each worker to a SINGLE CPU thread. OCR/onnxruntime and torch
+    CRITICAL: pin each worker to a SINGLE CPU thread. OCR/onnxruntime and OpenCV
     each default to using all CPU cores, so N multi-threaded workers oversubscribe
     and thrash (no real speedup). One thread per worker => N clean parallel streams.
+    No perception engine runs torch (the person detector and OCR are both on
+    onnxruntime), so torch is not imported here: it used to be, only to call
+    set_num_threads(1). MEASURED 2026-11-15, CPU-only, the imports below:
+    2.08 s and +493 MB RSS with it, 0.28 s and +39 MB without
+    (docs/TORCH_REMOVAL_SPIKE_2026-11.md, section 6).
     That pinning applies in BOTH device modes — decode, motion, face emotion
     (HSEmotion hardcodes CPUExecutionProvider) and PP-OCR's post-processing stay
     on the CPU regardless.
@@ -127,22 +228,9 @@ def _perceive_chunk(payload):
 
     import cv2
     cv2.setNumThreads(1)
-    import torch
-    torch.set_num_threads(1)
 
-    # Force every onnxruntime session (PP-OCRv6 det/rec, HSEmotion) to 1 intra-op
-    # thread by patching the SessionOptions factory the libs call.
     import onnxruntime as _ort
-    _OrigSO = _ort.SessionOptions
-    def _single_thread_so():
-        o = _OrigSO()
-        try:
-            o.intra_op_num_threads = 1
-            o.inter_op_num_threads = 1
-        except Exception:
-            pass
-        return o
-    _ort.SessionOptions = _single_thread_so
+    _pin_onnxruntime_threads(_ort)
     from engines.video.frame_extractor import extract_frames_range
     from engines.vision.detector import has_stable_facecam, run_vision, reset_vision_state
     from engines.video.motion import compute_motion_score, prepare_motion_frame
@@ -165,8 +253,15 @@ def _perceive_chunk(payload):
     stable_detections_required = max(1, int(payload.get("stable_facecam_detections", 1)))
 
     reset_vision_state()
-    fe.reset_emotion_state()
-    fer = fe._get_model() if include_facecam_emotion else None
+    # No reset_emotion_state(): the model holds no per-slice state, and
+    # resetting it reloaded HSEmotion for every slice a pool process ran
+    # (perceive_regions queues many regions per worker). _get_model caches
+    # per process, a load failure included.
+    # The configured scorer (RECALL_FACE_SCORER), as the sequential path uses
+    # it. This used to call HSEmotion directly: the packaged engine ships only
+    # the blendshape scorer, so every packaged quality scan had no face
+    # channel at all (found 2026-11-16: 0 of 11648 frames with a face).
+    scorer_ready = fe._scorer_ready() if include_facecam_emotion else False
     rows = []           # (timestamp, VisionSignal, OCRSignal)
     faces = []          # FaceFrame
     prev_motion = None
@@ -181,7 +276,14 @@ def _perceive_chunk(payload):
         except Exception:
             pass
 
-    for timestamp, frame in extract_frames_range(video_path, start, end, fps_sample_rate=1.0):
+    # Frames before ``start`` only warm the tracking state (facecam box, the
+    # face bbox _detect_face falls back on, the motion reference) and are not
+    # returned: that state used to start empty at every slice boundary. The
+    # slack keeps the frame a cold start would have opened on, which can sit
+    # up to half a frame before ``start``.
+    warmup_start = min(start, float(payload.get("warmup_start", start)))
+    for timestamp, frame in extract_frames_range(video_path, warmup_start, end, fps_sample_rate=1.0):
+        warming = timestamp < start - 0.05
         if facecam_tracking:
             elapsed = max(0.0, timestamp - start)
             should_scan_facecam = (
@@ -203,6 +305,13 @@ def _perceive_chunk(payload):
             vision.motion_score = compute_motion_score(prev_motion, motion_frame)
         prev_motion = motion_frame
 
+        if warming:
+            if include_facecam_emotion and vision and vision.facecam_box:
+                panel = fe._crop_facecam(frame, vision.facecam_box)
+                if panel is not None:
+                    _, last_bbox = fe._detect_face(panel, last_bbox)
+            continue
+
         if int(round(timestamp)) % ocr_stride == 0:
             ocr = run_ocr(frame, timestamp, min_confidence=ocr_min_conf)
         else:
@@ -216,18 +325,17 @@ def _perceive_chunk(payload):
             face = None
             if panel is not None:
                 face, last_bbox = fe._detect_face(panel, last_bbox)
-            if fer is None or face is None:
+            scored = None
+            if scorer_ready and face is not None:
+                try:
+                    scored = fe._score_crop(face)
+                except Exception:
+                    scored = None
+            if scored is None:
                 faces.append(fe.FaceFrame(timestamp, False, 0.0, 0.0, "neutral"))
             else:
-                try:
-                    import numpy as np
-                    emotion, scores = fer.predict_emotions(cv2.cvtColor(face, cv2.COLOR_BGR2RGB), logits=False)
-                    scores = np.asarray(scores, dtype="float32").ravel()
-                    arousal = float(scores[fe._AROUSAL_IDX]) if scores.size > fe._AROUSAL_IDX else 0.0
-                    valence = float(scores[fe._VALENCE_IDX]) if scores.size > fe._VALENCE_IDX else 0.0
-                    faces.append(fe.FaceFrame(timestamp, True, arousal, valence, str(emotion)))
-                except Exception:
-                    faces.append(fe.FaceFrame(timestamp, False, 0.0, 0.0, "neutral"))
+                arousal, valence, emotion = scored
+                faces.append(fe.FaceFrame(timestamp, True, float(arousal), float(valence), str(emotion)))
 
         rows.append((timestamp, vision, ocr))
 
@@ -359,6 +467,14 @@ def plan_perception(n_workers, settings=None):
     if not gpu_perception_enabled(settings):
         return n_workers, False
     try:
+        # Free VRAM comes from NVML, which reports the card whether or not
+        # this process can run CUDA on it (CUDA_VISIBLE_DEVICES, an unusable
+        # CUDA provider). Sizing the pool by VRAM and then running it on the
+        # CPU is the one way this could shrink the pool with no speedup.
+        from core.device import get_torch_device
+
+        if get_torch_device() != "cuda":
+            return n_workers, False
         from core.process_governor import gpu_perception_workers
 
         gpu_workers = gpu_perception_workers(n_workers)
@@ -380,11 +496,22 @@ def plan_perception(n_workers, settings=None):
 
 
 def perceive_parallel(video_path, duration, settings, pipeline_settings, n_workers,
-                      emit=None, gpu_ocr=False):
+                      emit=None, gpu_ocr=False, on_slice_done=None, cancel_check=None):
     """Run perception across processes. Returns (rows, faces) merged + time-sorted.
 
     rows: list of (timestamp, VisionSignal, OCRSignal). faces: list of FaceFrame
     (median-smoothed over present frames, matching analyze_faces).
+
+    ``on_slice_done(index, start, end, seconds)`` is told as each worker's
+    slice comes back, ``seconds`` after the pool started. Whether one worker
+    straggles behind the rest decides if smaller slices on a queue are worth
+    their facecam-state risk, and nothing recorded it. A failing hook is
+    printed and ignored.
+
+    ``cancel_check()`` is polled every couple of seconds and raises
+    InterruptedError to cancel; ``emit`` may raise it too. Anything that
+    leaves the polling loop -- a cancel, a stall, a worker's own exception --
+    kills the remaining workers before it propagates (see _stop_workers).
     """
     n_workers = max(1, int(n_workers))
     span = duration / n_workers
@@ -393,6 +520,7 @@ def perceive_parallel(video_path, duration, settings, pipeline_settings, n_worke
         payloads.append({
             "video_path": video_path,
             "start": i * span,
+            "warmup_start": max(0.0, i * span - _SLICE_WARMUP_SECONDS),
             "end": (i + 1) * span if i < n_workers - 1 else duration + 1.0,
             "facecam_tracking": settings.get("facecamTracking", True),
             "ocr_min_confidence": pipeline_settings["ocr_min_confidence"],
@@ -427,12 +555,14 @@ def perceive_parallel(video_path, duration, settings, pipeline_settings, n_worke
             payload["progress_proxy"] = positions
             payload["progress_key"] = index
 
-        with ProcessPoolExecutor(max_workers=n_workers) as ex:
+        with _worker_pool(n_workers) as ex:
             pending = {
                 ex.submit(_perceive_chunk, payload): index
                 for index, payload in enumerate(payloads)
             }
             while pending:
+                if cancel_check:
+                    cancel_check()
                 finished, _ = wait(
                     tuple(pending), timeout=2.0, return_when=FIRST_COMPLETED
                 )
@@ -442,6 +572,15 @@ def perceive_parallel(video_path, duration, settings, pipeline_settings, n_worke
                     index = pending.pop(future)
                     results.append(future.result())
                     completed.add(index)
+                    if on_slice_done:
+                        try:
+                            on_slice_done(
+                                index, float(payloads[index]["start"]),
+                                min(float(payloads[index]["end"]), float(duration)),
+                                now - started,
+                            )
+                        except Exception as exc:  # noqa: BLE001 - timing only
+                            print(f"Perception slice timing skipped: {exc}")
                     positions[index] = min(
                         float(payloads[index]["end"]), float(duration)
                     )
@@ -464,15 +603,8 @@ def perceive_parallel(video_path, duration, settings, pipeline_settings, n_worke
                         f"no progress for {(now - last_advance[index]) / 60:.0f} min)"
                         for index in dead
                     )
-                    # The with-block's shutdown(wait=True) would block forever on
-                    # a hung worker — kill the pool's processes first. _processes
-                    # is private executor API, but there is no public way to
-                    # terminate a running task.
-                    for proc in list(getattr(ex, "_processes", {}).values()):
-                        try:
-                            proc.terminate()
-                        except Exception:
-                            pass
+                    # Raising out of the pool block kills the hung worker
+                    # (_worker_pool); waiting for it would block forever.
                     raise WorkerStallError(
                         f"Perception stalled and was stopped: {detail}. "
                         "The VOD may have a corrupt section — try scanning again, "
@@ -539,7 +671,7 @@ def perceive_parallel(video_path, duration, settings, pipeline_settings, n_worke
         refill_workers = max(1, min(n_workers, len(gaps)))
         refill_rows, refill_faces = perceive_regions(
             video_path, gaps, settings, pipeline_settings, refill_workers,
-            emit=emit, gpu_ocr=gpu_ocr,
+            emit=emit, gpu_ocr=gpu_ocr, cancel_check=cancel_check,
         )
         for r in refill_rows:
             if int(round(r[0])) not in covered:
@@ -572,11 +704,16 @@ def perceive_parallel(video_path, duration, settings, pipeline_settings, n_worke
 
 
 def perceive_regions(video_path, regions, settings, pipeline_settings, n_workers,
-                     emit=None, gpu_ocr=False):
+                     emit=None, gpu_ocr=False, cancel_check=None):
     """Run dense perception only inside selected regions.
 
     Used by fast two-pass mode: the whole VOD gets a cheap first pass, then the
     likely highlight regions get 1 fps OCR + face emotion for final ranking.
+    Also refills perceive_parallel's coverage gaps.
+
+    ``cancel_check`` is polled every couple of seconds, since ``emit`` only
+    fires as a region finishes; a cancel or a worker's exception kills the
+    remaining workers as in perceive_parallel.
     """
     if not regions:
         return [], []
@@ -600,13 +737,17 @@ def perceive_regions(video_path, regions, settings, pipeline_settings, n_workers
     n_workers = max(1, min(int(n_workers), len(payloads)))
     results = []
     done = 0
-    with ProcessPoolExecutor(max_workers=n_workers) as ex:
-        futures = [ex.submit(_perceive_chunk, p) for p in payloads]
-        for fut in as_completed(futures):
-            results.append(fut.result())
-            done += 1
-            if emit:
-                emit("Perception", f"Refined region {done}/{len(payloads)}", 0.45 + 0.12 * (done / len(payloads)))
+    with _worker_pool(n_workers) as ex:
+        pending = {ex.submit(_perceive_chunk, p) for p in payloads}
+        while pending:
+            if cancel_check:
+                cancel_check()
+            finished, pending = wait(pending, timeout=2.0, return_when=FIRST_COMPLETED)
+            for fut in finished:
+                results.append(fut.result())
+                done += 1
+                if emit:
+                    emit("Perception", f"Refined region {done}/{len(payloads)}", 0.45 + 0.12 * (done / len(payloads)))
 
     results.sort(key=lambda r: r["start"])
     rows, faces = [], []

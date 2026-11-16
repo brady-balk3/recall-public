@@ -13,9 +13,11 @@ import contextlib
 import os
 import shutil
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Optional
 
+from core import cache_keys
 from core.bundle_paths import get_data_dir
 from core.source_identity import canonical_source_key
 
@@ -25,6 +27,23 @@ DEFAULT_RECALL_CAP_GB = 25.0
 DEFAULT_SOURCE_RETENTION_DAYS = 7
 DOWNLOAD_RESERVE_BYTES = 2 * GIB
 UNKNOWN_DOWNLOAD_ESTIMATE_BYTES = 4 * GIB
+# A data/temp entry untouched this long is abandoned. Everything that works
+# there (a caption edit, a render, a preview) finishes in minutes.
+TEMP_STALE_SECONDS = 24 * 60 * 60
+
+# Automatic cache eviction order (reconcile_recall_storage), cheapest loss
+# first. ORPHANED: files of no source still on disk, or of no source at all;
+# nothing will read them again. REGENERABLE: the analysis WAVs (~115 MB per
+# VOD-hour, re-extracted in about a minute) and the editor's own sub-caches
+# (filmstrips, waveforms, the half-precision matting model copy, remote
+# strips), each rebuilt on demand in seconds. RESULTS: a source's small scan
+# results (signals, transcript, speech regions, chat, events, faces, judge
+# verdicts, the streamer-voice map, its index), ~3 MB per two-hour VOD, which
+# spare a re-scan of that VOD its Perception, ASR and judge passes.
+_TIER_ORPHANED = 0
+_TIER_REGENERABLE = 1
+_TIER_RESULTS = 2
+_VERDICT_DIR = "visual_judge"
 
 _SOURCE_USE_LOCK = threading.RLock()
 _ACTIVE_SOURCE_KEYS: dict[str, int] = {}
@@ -108,9 +127,14 @@ def source_in_use(db: Any, job_id: str):
 
 
 class SourceLifecycleService:
-    def __init__(self, db: Any, job_manager: Any = None, data_root: Optional[str] = None):
+    def __init__(self, db: Any, job_manager: Any = None, data_root: Optional[str] = None,
+                 finished_job_id: Optional[str] = None):
         self.db = db
         self.job_manager = job_manager
+        # The scan the post-scan janitor runs for. That job is still in the
+        # job manager's active set while its thread winds down, and it must
+        # not defer its own cleanup; any OTHER queued or running job still does.
+        self.finished_job_id = finished_job_id
         self.data_root = os.path.abspath(data_root or get_data_dir())
         self.assets_root = os.path.join(self.data_root, "assets")
         self.cache_root = os.path.join(self.data_root, "cache")
@@ -147,11 +171,18 @@ class SourceLifecycleService:
     def _has_active_scan(self) -> bool:
         # The in-process job manager knows about work that has not reached the
         # jobs table yet, so it gets the first say before we fall back to the DB.
-        if self.job_manager is not None and self.job_manager.has_active_jobs():
-            return True
+        if self.job_manager is not None:
+            if self.finished_job_id is not None:
+                busy = self.job_manager.has_active_jobs(excluding=self.finished_job_id)
+            else:
+                busy = self.job_manager.has_active_jobs()
+            if busy:
+                return True
         with self.db.get_connection() as conn:
             row = conn.execute(
-                "SELECT 1 FROM jobs WHERE status IN ('pending','running','cancelling') LIMIT 1"
+                "SELECT 1 FROM jobs WHERE status IN ('pending','running','cancelling') "
+                "AND id IS NOT ? LIMIT 1",
+                (self.finished_job_id,),
             ).fetchone()
         return row is not None
 
@@ -360,6 +391,10 @@ class SourceLifecycleService:
         path = row["local_path"]
         if path and not _inside(self.assets_root, path):
             raise RuntimeError("Refusing to remove a source outside Recall's data/assets folder.")
+        # Before the file goes: its cache keys are derived from its stat, and
+        # nothing can read these files once it is gone (a restored download
+        # gets a new mtime, so new keys).
+        cache_removed = self._remove_source_cache(path)
         removed = self._delete_managed_file(path, self.assets_root)
         now = _iso(_utcnow())
         with self.db.get_connection() as conn:
@@ -373,7 +408,12 @@ class SourceLifecycleService:
                 "updated_at = ?, last_error = NULL WHERE source_key = ?",
                 (now, source_key),
             )
-        return {"source_key": source_key, "bytes_removed": removed, "state": "source_removed"}
+        return {
+            "source_key": source_key,
+            "bytes_removed": removed,
+            "cache_bytes_removed": cache_removed,
+            "state": "source_removed",
+        }
 
     def set_pinned(self, source_key: str, pinned: bool) -> Dict[str, Any]:
         if not self._source_row(source_key):
@@ -623,15 +663,23 @@ class SourceLifecycleService:
 
                 emit("source_restore_started", "Restoring the Twitch source.", 0.0)
 
+                # The restore panel shows this as a percentage. resolve_input's
+                # ``value`` is a scan's overall progress (the download is its
+                # first 5%), so the share downloaded comes from download_callback.
+                downloaded = {"share": 0.0}
+
+                def on_download(share: float, _eta: Any = None) -> None:
+                    downloaded["share"] = max(0.0, min(1.0, float(share or 0)))
+
                 def progress(message: str, value: float, _eta: Any = None) -> None:
                     if cancel.is_set():
                         raise InterruptedError("Source restoration cancelled")
-                    _RESTORE_PROGRESS[source_key] = {"progress": max(0.0, min(1.0, float(value or 0))), "message": message}
+                    _RESTORE_PROGRESS[source_key] = {"progress": downloaded["share"], "message": message}
                     emit("source_restore_progress", message, value)
 
                 restored = resolve_input(
                     row["twitch_url"], output_dir=self.assets_root, progress_callback=progress,
-                    cancel_check=cancel.is_set,
+                    cancel_check=cancel.is_set, download_callback=on_download,
                 )
                 restored = os.path.abspath(restored)
                 if not _inside(self.assets_root, restored) or not os.path.isfile(restored):
@@ -715,13 +763,136 @@ class SourceLifecycleService:
         os.makedirs(self.cache_root, exist_ok=True)
         return {"bytes_removed": removed}
 
+    # --- Cache attribution ---------------------------------------------------
+
+    def _live_source_paths(self) -> set[str]:
+        """Every media file a scan may have keyed its cache on that is still on
+        disk: managed downloads and creator recordings alike, in each spelling
+        the database holds (the keys hash the absolute path as given)."""
+        paths: set[str] = set()
+        if os.path.isdir(self.assets_root):
+            for name in os.listdir(self.assets_root):
+                paths.add(os.path.join(self.assets_root, name))
+        with self.db.get_connection() as conn:
+            for row in conn.execute("SELECT local_path FROM source_assets").fetchall():
+                paths.add(row["local_path"])
+            for row in conn.execute("SELECT source_path, asset_path FROM jobs").fetchall():
+                paths.update((row["source_path"], row["asset_path"]))
+        live = set()
+        for path in paths:
+            try:
+                if path and os.path.isfile(path):
+                    live.add(os.path.abspath(path))
+            except (OSError, ValueError, TypeError):
+                continue
+        return live
+
+    def _source_cache_keys(self, path: str) -> tuple[set[str], set[str]]:
+        """(file-name key prefixes, verdict keys) of one source file."""
+        try:
+            audio_key = cache_keys.audio_cache_key(path)
+        except OSError:
+            return set(), set()
+        index = cache_keys.read_cache_index(self.cache_root, audio_key)
+        return {audio_key} | index["video_hashes"], index["visual_verdicts"]
+
+    def _cache_tier(self, path: str, prefixes: set[str], verdicts: set[str]) -> int:
+        parts = os.path.relpath(path, self.cache_root).split(os.sep)
+        name = parts[-1]
+        if name.endswith(".tmp"):
+            # A half-written entry: no scan runs while the janitor does.
+            return _TIER_ORPHANED
+        if len(parts) > 1:
+            if parts[0] == _VERDICT_DIR and len(parts) == 2:
+                key = name[:-len(".json")] if name.endswith(".json") else None
+                return _TIER_RESULTS if key in verdicts else _TIER_ORPHANED
+            return _TIER_REGENERABLE
+        owner, separator, _ = name.partition("_")
+        if not separator or owner not in prefixes:
+            return _TIER_ORPHANED
+        return _TIER_REGENERABLE if name.endswith(".wav") else _TIER_RESULTS
+
+    def _cache_entries_by_tier(self) -> dict[int, list[tuple[float, int, str]]]:
+        """Cache files by eviction tier, each list oldest first. An index or
+        name that cannot be traced to a source on disk makes a file ORPHANED,
+        so a broken attribution can cost a re-scan, never keep dead data."""
+        prefixes: set[str] = set()
+        verdicts: set[str] = set()
+        for path in self._live_source_paths():
+            source_prefixes, source_verdicts = self._source_cache_keys(path)
+            prefixes |= source_prefixes
+            verdicts |= source_verdicts
+        tiers: dict[int, list[tuple[float, int, str]]] = {
+            _TIER_ORPHANED: [], _TIER_REGENERABLE: [], _TIER_RESULTS: [],
+        }
+        for entry in self._entries_oldest_first(self.cache_root):
+            tiers[self._cache_tier(entry[2], prefixes, verdicts)].append(entry)
+        return tiers
+
+    def _remove_source_cache(self, path: Optional[str]) -> int:
+        """Delete the cache files keyed on the source file ``path`` (its WAV,
+        results and listed verdicts); returns the bytes removed. The editor's
+        sub-caches are left to the size cap: their names carry no source."""
+        if not path or not os.path.isfile(path):
+            return 0
+        prefixes, verdicts = self._source_cache_keys(path)
+        removed = 0
+        for _, size, item in self._entries_oldest_first(self.cache_root):
+            if not _inside(self.cache_root, item):
+                continue
+            parts = os.path.relpath(item, self.cache_root).split(os.sep)
+            if len(parts) > 1 and parts[0] != _VERDICT_DIR:
+                continue
+            if self._cache_tier(item, prefixes, verdicts) == _TIER_ORPHANED:
+                continue
+            try:
+                os.remove(item)
+                removed += size
+            except OSError:
+                continue
+        return removed
+
+    @staticmethod
+    def _newest_mtime(path: str) -> float:
+        """Latest modification time of ``path`` or anything inside it."""
+        newest = os.path.getmtime(path)
+        if os.path.isdir(path):
+            for dirpath, dirnames, filenames in os.walk(path):
+                for name in dirnames + filenames:
+                    try:
+                        newest = max(newest, os.path.getmtime(os.path.join(dirpath, name)))
+                    except OSError:
+                        continue
+        return newest
+
     def _clean_abandoned_temp(self) -> int:
+        """Remove only temp entries nothing has touched for TEMP_STALE_SECONDS.
+
+        "No scan is active" does not mean data/temp is idle: the caption
+        editor's audio, on-demand renders and VOD Editor previews live there
+        too, and this runs after every scan. Purging the whole folder deleted
+        them mid-use. A scan removes its own folder (StorageManager), so what
+        is left here and old is abandoned.
+        """
         if self._has_active_scan():
             return 0
-        removed = self._folder_size(self.temp_root)
-        if os.path.isdir(self.temp_root):
-            shutil.rmtree(self.temp_root, ignore_errors=True)
         os.makedirs(self.temp_root, exist_ok=True)
+        cutoff = time.time() - TEMP_STALE_SECONDS
+        removed = 0
+        for name in os.listdir(self.temp_root):
+            path = os.path.join(self.temp_root, name)
+            try:
+                if os.path.islink(path) or self._newest_mtime(path) >= cutoff:
+                    continue
+                if os.path.isdir(path):
+                    size = self._folder_size(path)
+                    shutil.rmtree(path)
+                else:
+                    size = os.path.getsize(path)
+                    os.remove(path)
+                removed += size
+            except OSError:
+                continue
         return removed
 
     def reconcile_recall_storage(self) -> Dict[str, Any]:
@@ -733,7 +904,17 @@ class SourceLifecycleService:
             temp_removed = self._clean_abandoned_temp()
             total = sum(before.values())
             if total > cap_bytes:
-                for _, size, path in self._entries_oldest_first(self.cache_root):
+                tiers = self._cache_entries_by_tier()
+                results = tiers[_TIER_RESULTS]
+                evict = tiers[_TIER_ORPHANED] + tiers[_TIER_REGENERABLE]
+                # The small results go only when removing them can actually
+                # bring Recall within its target. When clips and session data
+                # alone exceed it, deleting a few MB per VOD gains nothing and
+                # costs every re-scan of those VODs its full price.
+                floor = total - sum(size for _, size, _ in evict + results)
+                if floor <= cap_bytes:
+                    evict += results
+                for _, size, path in evict:
                     if total <= cap_bytes:
                         break
                     if not _inside(self.cache_root, path):
@@ -747,6 +928,25 @@ class SourceLifecycleService:
         after = self._recall_categories()
         total_after = sum(after.values())
         overage = max(0, total_after - cap_bytes)
+        kept_results = 0
+        if overage:
+            kept_results = sum(
+                size for _, size, _ in self._cache_entries_by_tier()[_TIER_RESULTS]
+            )
+        if not overage:
+            message = "Recall storage is within its target."
+        elif kept_results:
+            message = (
+                f"Recall is still {overage / GIB:.1f} GB over its target after safe cache cleanup. "
+                "Clips and required session data were not removed, nor "
+                f"{kept_results / 1024 ** 2:.1f} MB of scan results that let downloaded "
+                "VODs still on this PC re-scan quickly."
+            )
+        else:
+            message = (
+                f"Recall is still {overage / GIB:.1f} GB over its target after safe cache cleanup. "
+                "Clips and required session data were not removed."
+            )
         return {
             "cap_bytes": cap_bytes,
             "categories": after,
@@ -755,13 +955,12 @@ class SourceLifecycleService:
             "overage_bytes": overage,
             "cache_bytes_removed": cache_removed,
             "temp_bytes_removed": temp_removed,
+            # Scan results kept although Recall is over its target. They are
+            # counted in scan_data and reclaimable_bytes: "Clean safe cache"
+            # still removes them.
+            "kept_scan_results_bytes": kept_results,
             "cleanup_deferred": self._has_active_scan(),
-            "message": (
-                f"Recall is still {overage / GIB:.1f} GB over its target after safe cache cleanup. "
-                "Clips and required session data were not removed."
-                if overage
-                else "Recall storage is within its target."
-            ),
+            "message": message,
         }
 
     def _recall_categories(self) -> Dict[str, int]:

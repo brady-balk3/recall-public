@@ -22,6 +22,7 @@ from core.device import (
     get_torch_device,
     llama_gpu_offload,
     reset_device_cache,
+    visible_gpus,
 )
 from core.process_governor import (
     available_memory_gb,
@@ -99,12 +100,16 @@ def _windows_gpu_adapters() -> List[Dict[str, str]]:
     return adapters
 
 
-def _torch_cuda_name() -> Optional[str]:
-    try:
-        import torch
+def _cuda_device_name() -> Optional[str]:
+    """Name of the GPU CUDA would call device 0, from NVML (no torch, no context).
 
-        if torch.cuda.is_available():
-            return str(torch.cuda.get_device_name(0) or "").strip() or None
+    Replaces torch.cuda.get_device_name(0); both report the driver's marketing
+    name ("NVIDIA GeForce RTX 4070 Ti SUPER"), which is also what WMI lists.
+    """
+    try:
+        gpus = visible_gpus()
+        if gpus:
+            return str(gpus[0]["name"] or "").strip() or None
     except Exception:
         pass
     return None
@@ -115,7 +120,7 @@ def _detect_gpu_adapters(torch_device: str) -> List[Dict[str, str]]:
     if torch_device != "cuda":
         return adapters
 
-    cuda_name = _torch_cuda_name()
+    cuda_name = _cuda_device_name()
     if not cuda_name:
         return adapters
     if any(adapter["vendor"] == "nvidia" and adapter["name"] == cuda_name for adapter in adapters):

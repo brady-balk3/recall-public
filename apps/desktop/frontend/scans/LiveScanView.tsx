@@ -17,6 +17,7 @@ import { buildLocalDiagnostics } from "../lib/diagnostics";
 import { fmtClock, fmtDurationHuman } from "../lib/format";
 import { AlertTriangle, ArrowLeft, Check, ChevronDown, Copy, FolderOpen, Play, RefreshCw, X } from "../lib/icons";
 import { primaryReviewDeckClips } from "../lib/reviewDeck";
+import { useNow } from "../lib/polling";
 import { useJobStore, type Job, type Session } from "../lib/store";
 import { clockIn, fmtEstimate, type ScanRates } from "./estimate";
 import { ActivityList, useScanLog } from "./ScanLog";
@@ -81,17 +82,6 @@ export function LiveScanView(props: LiveScanViewProps) {
       )}
     </div>
   );
-}
-
-function useTicker(running: boolean, key?: string) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    setNow(Date.now());
-    if (!running) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [running, key]);
-  return now;
 }
 
 interface RailProps {
@@ -188,7 +178,8 @@ function TechChips({ job, elapsed, speed }: { job?: Job; elapsed: number; speed:
 
 function RunningScan({ job, session, cancelRequested, onCancel, rates }: LiveScanViewProps) {
   const running = !!job && !TERMINAL.has(job.status);
-  const now = useTicker(running, job?.id);
+  // The shared 1s clock: it holds while this page is behind another one.
+  const now = useNow(running);
   const [hot, setHot] = useState<string | null>(null);
   const index = stageIndex(job);
   const progress = Math.max(0, Math.min(100, job?.progress ?? 0));

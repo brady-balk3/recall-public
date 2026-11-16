@@ -210,6 +210,13 @@ async function resolveVideoNode({
 	if (!frame) {
 		return null;
 	}
+	// Recall: the whole frame, for the Cutting Room's full-frame pane.
+	context.renderer.tappedSources?.push({
+		mediaId: node.params.mediaId,
+		elementId: node.params.elementId,
+		canvas: frame.canvas,
+		masks: node.params.masks ?? [],
+	});
 
 	const visualState = resolveVisualState({
 		params: node.params,

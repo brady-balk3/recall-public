@@ -28,6 +28,16 @@ MEDIA_EXTENSIONS = (".mp4", ".mkv", ".webm")
 _TWITCH_VOD_RE = re.compile(r"twitch\.tv/videos/(\d+)", re.IGNORECASE)
 _PCT_RE = re.compile(r"(\d{1,3})%")
 
+# Where resolving the input sits in the job's overall progress. It has to end
+# at or below the first number the pipeline emits (0.05, the video metadata
+# line), or the bar runs back when Perception starts. The byte download is the
+# long part and gets most of the room; the CLI's steps after it (finalizing,
+# muxing) report their own percentage and fill the rest; a status line before
+# the download (fetching video info) holds the starting value.
+RESOLVE_START_PROGRESS = 0.005
+DOWNLOAD_PROGRESS_RANGE = (0.01, 0.04)
+RESOLVE_DONE_PROGRESS = 0.05
+
 
 def is_url(input_source: str) -> bool:
     """Check if the input source is a URL."""
@@ -117,13 +127,22 @@ def _download_status(process, cancel_check=None):
             process.stdout.close()
 
 
-def resolve_input(input_source: str, output_dir: str | None = None, progress_callback=None, cancel_check=None) -> str:
+def resolve_input(input_source: str, output_dir: str | None = None, progress_callback=None, cancel_check=None,
+                  download_callback=None) -> str:
     """Resolve ``input_source`` to a local media file path.
 
     Local file -> its absolute path. Twitch VOD URL -> downloaded via
     TwitchDownloaderCLI (cached by VOD id). ``progress_callback(message,
     progress, eta_seconds)`` is called during download; it may raise
     ``InterruptedError`` to cancel, which kills the download promptly.
+    ``progress`` is the job's overall progress, never decreasing within one
+    call and never above RESOLVE_DONE_PROGRESS.
+
+    ``download_callback(fraction, eta_seconds)``, when given, receives the
+    share of the VOD downloaded so far (0.0-1.0) as a number, so a consumer
+    need not parse it out of the message. It is called just before the
+    progress_callback for the same status line. ``eta_seconds`` is None: the
+    CLI reports no estimate.
     """
     if cancel_check is not None and cancel_check():
         raise InterruptedError("Download cancelled")
@@ -155,7 +174,7 @@ def resolve_input(input_source: str, output_dir: str | None = None, progress_cal
     existing_file = _existing_download(output_dir, asset_key)
     if existing_file:
         if progress_callback:
-            progress_callback("Using cached VOD download.", 0.075, None)
+            progress_callback("Using cached VOD download.", RESOLVE_DONE_PROGRESS, None)
         print(f"Using cached VOD: {existing_file}")
         return existing_file
 
@@ -202,25 +221,39 @@ def resolve_input(input_source: str, output_dir: str | None = None, progress_cal
         # Keep a rolling tail of CLI output so a failure surfaces the real reason
         # (a .NET stack trace, "video not found", etc.) instead of a bare exit code.
         tail = collections.deque(maxlen=40)
+        # Highest progress reported so far. Before this, "Fetching Video Info"
+        # reported 0.07 and then the download restarted the bar at 0.01.
+        reported = RESOLVE_START_PROGRESS
+        downloading = False
         try:
             for chunk in _download_status(proc, cancel_check):
                 tail.append(chunk)
-                if not progress_callback:
+                if not progress_callback and not download_callback:
                     continue
-                # TwitchDownloaderCLI phases: "Downloading X%" -> "Combining Parts
-                # X%" -> "Finalizing". Surface the download % (the long part) and
-                # keep the callback firing so a cancel aborts promptly.
+                # TwitchDownloaderCLI phases: "Fetching Video Info" ->
+                # "Downloading X%" -> "Combining Parts X%" / "Finalizing Video X%".
+                # Surface the download % (the long part) and keep the callback
+                # firing so a cancel aborts promptly.
                 label = chunk.replace("[STATUS] - ", "").replace("[STATUS]", "").strip()
                 m = _PCT_RE.search(label)
-                if m and "download" in label.lower():
-                    ratio = min(1.0, max(0.0, int(m.group(1)) / 100.0))
-                    progress_callback(
-                        f"Downloading Twitch VOD: {m.group(1)}%",
-                        0.01 + ratio * 0.065,
-                        None,
-                    )
+                ratio = min(1.0, max(0.0, int(m.group(1)) / 100.0)) if m else None
+                if ratio is not None and "download" in label.lower():
+                    downloading = True
+                    low, high = DOWNLOAD_PROGRESS_RANGE
+                    reported = max(reported, low + ratio * (high - low))
+                    if download_callback:
+                        download_callback(ratio, None)
+                    # The frontend's activity list formats this wording.
+                    message = f"Downloading Twitch VOD: {m.group(1)}%"
                 elif label:
-                    progress_callback(label, 0.07, None)
+                    if downloading and ratio is not None:
+                        low = DOWNLOAD_PROGRESS_RANGE[1]
+                        reported = max(reported, low + ratio * (RESOLVE_DONE_PROGRESS - low))
+                    message = label
+                else:
+                    continue
+                if progress_callback:
+                    progress_callback(message, reported, None)
             proc.wait()
         except BaseException:
             # Includes InterruptedError from a cancel inside progress_callback.

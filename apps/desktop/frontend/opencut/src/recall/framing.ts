@@ -49,7 +49,9 @@ export type FramingLookup = (streamRef: string, piece: FramingPiece, playhead: n
 
 export const FRAMING_TRACK_PREFIX = "recall-framing:";
 const FRAMING_TRACK_NAME = "Facecam (Recall)";
-const FRAMING_ELEMENT_SUFFIX = "~recall-layer";
+export const FRAMING_ELEMENT_SUFFIX = "~recall-layer";
+/** The mask framing puts on every framed element (its region of the source). */
+export const FRAMING_MASK_ID = "recall-framing";
 const SOURCE_ASPECT = 16 / 9;
 
 export function isFramingTrack(track: { id?: string }): boolean {
@@ -81,7 +83,7 @@ export function layerState(layer: FramingLayer, canvas: { width: number; height:
 	const positionX = tx + tw / 2 - canvas.width / 2 - (sx + sw / 2 - 0.5) * baseW * scaleX;
 	const positionY = ty + th / 2 - canvas.height / 2 - (sy + sh / 2 - 0.5) * baseH * scaleY;
 	const mask: RectangleMask = {
-		id: "recall-framing",
+		id: FRAMING_MASK_ID,
 		type: "rectangle",
 		params: {
 			centerX: sx + sw / 2 - 0.5,
@@ -148,7 +150,10 @@ export function applyFraming(editor: EditorCore, lookup: FramingLookup, playhead
 			if (!asset || !ref) return element;
 			const layers = lookup(ref, streamPiece(element, asset), playhead);
 			if (!layers?.length) return element;
-			const [first, ...rest] = layers;
+			// An "avatar" layer (a VTuber cutout) is drawn by the preview itself
+			// (cutout-overlay.tsx): the editor can't key its alpha mask.
+			const [first, ...rest] = layers.filter((layer) => layer.role !== "avatar");
+			if (!first) return element;
 			const state = layerState(first, canvas);
 			rest.forEach((layer, index) => {
 				derived.push({

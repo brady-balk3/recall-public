@@ -95,8 +95,21 @@ export function KeepersReel({ items, label, drift = false }: { items: ReelItem[]
       }
       raf = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    const el = viewport.current;
+    if (!el || typeof IntersectionObserver === "undefined") {
+      raf = requestAnimationFrame(tick);
+      return () => cancelAnimationFrame(raf);
+    }
+    // Drift only while the strip is on screen: Home and Review stay mounted
+    // behind other pages, and a hidden strip would still tick (and measure
+    // itself) every frame.
+    const observer = new IntersectionObserver((entries) => {
+      const seen = entries[entries.length - 1]?.isIntersecting ?? false;
+      if (seen && !raf) raf = requestAnimationFrame(tick);
+      if (!seen && raf) { cancelAnimationFrame(raf); raf = 0; }
+    });
+    observer.observe(el);
+    return () => { observer.disconnect(); cancelAnimationFrame(raf); };
   }, [drift, bounds]);
   useEffect(() => {
     // Content changed (fewer keepers, window resized): stay inside the strip.

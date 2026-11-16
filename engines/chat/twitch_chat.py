@@ -207,6 +207,8 @@ def fetch_twitch_video_meta(
 
 
 def _parse_chat_json(path: str, max_messages: int) -> Optional[List[ChatMessage]]:
+    """The replay's messages; an empty list for a replay with none, None for a
+    file that is not a chat replay."""
     with open(path, "r", encoding="utf-8") as fh:
         data = json.load(fh)
     comments = data.get("comments")
@@ -227,7 +229,7 @@ def _parse_chat_json(path: str, max_messages: int) -> Optional[List[ChatMessage]
         ))
         if len(out) >= max_messages:
             break
-    return out or None
+    return out
 
 
 def fetch_twitch_chat_regions(
@@ -237,6 +239,7 @@ def fetch_twitch_chat_regions(
     cancel_check: Optional[Callable[[], None]] = None,
     timeout: float = DEFAULT_TIMEOUT_SEC,
     temp_dir: Optional[str] = None,
+    status: Optional[dict] = None,
 ) -> Optional[List[ChatMessage]]:
     """Fetch chat for only the given ``(start, end)`` second regions, merged.
 
@@ -251,7 +254,13 @@ def fetch_twitch_chat_regions(
     Best-effort like every optional channel: a failed region is skipped, a
     partial fetch returns what arrived, and any total failure returns None.
     ``cancel_check`` may raise InterruptedError, which propagates.
+
+    The return value cannot tell a partial or failed fetch from regions whose
+    chat is quiet, and a caller that caches it must. ``status``, when given,
+    gets ``complete``: True only when every region downloaded and parsed.
     """
+    if status is not None:
+        status["complete"] = False
     vid = _vod_id(url)
     if not vid or not get_twitchdl_path():
         return None
@@ -265,6 +274,7 @@ def fetch_twitch_chat_regions(
 
     merged: List[ChatMessage] = []
     seen = set()
+    fetched = 0
     deadline = time.monotonic() + max(1.0, timeout)
     for start, end in spans:
         remaining = deadline - time.monotonic()
@@ -277,7 +287,10 @@ def fetch_twitch_chat_regions(
                 vid, out_path, cancel_check, remaining, begin=start, end=end,
             ):
                 continue
-            msgs = _parse_chat_json(out_path, max_messages - len(merged)) or []
+            msgs = _parse_chat_json(out_path, max_messages - len(merged))
+            if msgs is None:
+                continue
+            fetched += 1
         except InterruptedError:
             raise
         except Exception:
@@ -295,6 +308,8 @@ def fetch_twitch_chat_regions(
                 merged.append(m)
 
     merged.sort(key=lambda m: m.timestamp)
+    if status is not None:
+        status["complete"] = fetched == len(spans)
     return merged or None
 
 
@@ -310,6 +325,12 @@ def fetch_twitch_chat(
     ``content_offset_seconds`` on each replay comment is the offset into the VOD,
     which aligns directly with the reaction timeline. Best-effort and defensive:
     any failure/timeout returns None so a scan never fails because of chat.
+
+    A list is a complete answer: the CLI exited cleanly and its replay parsed,
+    so an empty list is a VOD whose chat is empty (and at most ``max_messages``
+    long, a fixed cap). None says nothing about the chat -- no CLI, a timeout,
+    a failed download or an unreadable file -- and a caller must not store it
+    as the VOD's chat. Both used to come back as None.
 
     ``cancel_check`` (if given) is polled while the CLI runs and may raise
     ``InterruptedError`` to abort; the child process is always killed on exit.

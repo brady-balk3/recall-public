@@ -774,6 +774,8 @@ class VisualLlamaBackend:
         tokenizer.chat_template until the first completion, so a constructor
         guard would let a template-less model fail once per candidate instead.
         """
+        from core.device import prepare_llama_cuda
+        prepare_llama_cuda()  # CUDA DLL folders on the search path before llama.dll loads
         from llama_cpp.llama_chat_format import MTMDChatHandler, Qwen25VLChatHandler
 
         if self._has_chat_template():
@@ -794,6 +796,8 @@ class VisualLlamaBackend:
         mtmd: it is the general path, and its failure is loud rather than a
         silently mis-formatted prompt.
         """
+        from core.device import prepare_llama_cuda
+        prepare_llama_cuda()  # CUDA DLL folders on the search path before llama.dll loads
         from llama_cpp import Llama
 
         probe = None
@@ -814,6 +818,8 @@ class VisualLlamaBackend:
     def _load(self):
         if self._llm is not None:
             return self._llm
+        from core.device import prepare_llama_cuda
+        prepare_llama_cuda()  # CUDA DLL folders on the search path before llama.dll loads
         from llama_cpp import Llama
 
         handler = self._chat_handler()

@@ -154,3 +154,12 @@
 @media (prefers-reduced-motion: reduce) {
   .oce-btn, .oce-back, .oce-btn.is-primary[aria-busy="true"]::before { transition: none; }
 }
+
+/* Recall: the live 9:16 clip beside the full frame. Sized from the pane's
+   height, a touch wider than 9:16 to cover the preview's own padding. */
+.recall-clip-pane {
+  flex: none;
+  height: 100%;
+  aspect-ratio: 9.5 / 16;
+  max-width: 42%;
+}

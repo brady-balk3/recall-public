@@ -30,7 +30,8 @@ import {
   type IconProps,
 } from "../lib/icons";
 import { LetterAvatar } from "./LetterAvatar";
-import { profileLine, type ShellCounts } from "./shellModel";
+import { useJobStore } from "../lib/store";
+import { profileLine, scanProgress, type ShellCounts } from "./shellModel";
 import type { NewStreamKind, View } from "./views";
 
 type Icon = ComponentType<IconProps>;
@@ -79,8 +80,17 @@ export function Sidebar({ view, counts, displayName, settingsOpen = false, liveA
   const count = (n: number, heat = false, label?: string) =>
     n > 0 ? <span className={`sb-n num ${heat ? "heat" : ""}`} aria-label={label}>{n}</span> : null;
 
-  const scanMeta = counts.scan
-    ? <span className="sb-meta num"><ProgressRing value={counts.scan.progress} /><span>{Math.floor(counts.scan.progress)}%</span></span>
+  // The running scan's progress is read here rather than handed down, so a
+  // progress event redraws this card and not the whole shell (lib/liveJobs).
+  const scanId = counts.scan?.id;
+  const liveProgress = useJobStore((state) => {
+    const job = scanId ? state.jobs.find((candidate) => candidate.id === scanId) : undefined;
+    return job ? scanProgress(job) : undefined;
+  });
+  const scan = counts.scan && { ...counts.scan, progress: liveProgress ?? counts.scan.progress };
+
+  const scanMeta = scan
+    ? <span className="sb-meta num"><ProgressRing value={scan.progress} /><span>{Math.floor(scan.progress)}%</span></span>
     : count(counts.queued, false, `${counts.queued} queued`);
 
   return (
@@ -134,14 +144,14 @@ export function Sidebar({ view, counts, displayName, settingsOpen = false, liveA
         </div>
       )}
 
-      {counts.scan && (
+      {scan && (
         <button type="button" className="sb-scan" onClick={() => onView("queue")}>
           <span className="sb-scan-row">
             <span className="sb-scan-label">Scanning</span>
-            <span className="num">{Math.floor(counts.scan.progress)}%</span>
+            <span className="num">{Math.floor(scan.progress)}%</span>
           </span>
-          <b>{counts.scan.title}</b>
-          <span className="sb-bar" aria-hidden="true"><i style={{ transform: `scaleX(${counts.scan.progress / 100})` }} /></span>
+          <b>{scan.title}</b>
+          <span className="sb-bar" aria-hidden="true"><i style={{ transform: `scaleX(${scan.progress / 100})` }} /></span>
         </button>
       )}
 

@@ -21,6 +21,7 @@ import { hypeOf } from "../home/homeModel";
 import StudioEmptyState from "../components/StudioEmptyState";
 import { apiFetch, apiUrl, mediaUrl } from "../lib/api";
 import { fmtClock } from "../lib/format";
+import { usePolling } from "../lib/polling";
 import { Download, FolderOpen, Library, Pulse, RefreshCw, Scissors } from "../lib/icons";
 import { useJobStore, type Clip, type ManualClipLayout, type ReactionTimeline, type Session } from "../lib/store";
 import type { Box } from "../components/FacecamCropper";
@@ -85,6 +86,7 @@ const LAYOUTS: { value: ManualClipLayout; label: string; note: string }[] = [
   { value: "vertical_split", label: "Stacked", note: "Cam over game" },
   { value: "gameplay_pip", label: "PiP", note: "Game first, cam inset" },
   { value: "full_gameplay", label: "Gameplay", note: "No facecam" },
+  { value: "vtuber_overlay", label: "VTuber", note: "Avatar cut out over game" },
 ];
 
 interface ClipFraming {
@@ -301,23 +303,20 @@ export default function CuttingRoomEditor({ session, sessions = [], onLoadSessio
     setSourceState("missing");
   }, [status?.source_key, apiEndpoint]);
 
-  useEffect(() => {
-    if (sourceState !== "restoring") return;
-    const timer = window.setInterval(async () => {
-      const next = await loadStatus();
-      if (!next) return;
-      if (next.local_path) {
-        window.clearInterval(timer);
-        addLog("Twitch source restored. It's open in the Cutting Room.", "success");
-        setSourceState("ready");
-      } else if (next.state === "unavailable") {
-        window.clearInterval(timer);
-        setError(next.last_error || "The original Twitch source is currently unavailable.");
-        setSourceState("missing");
-      }
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [sourceState, loadStatus, addLog]);
+  // Download progress for this page: waits while the window is minimized and
+  // looks again the moment it's back. Stops once the state leaves "restoring".
+  const pollRestore = useCallback(async () => {
+    const next = await loadStatus();
+    if (!next) return;
+    if (next.local_path) {
+      addLog("Twitch source restored. It's open in the Cutting Room.", "success");
+      setSourceState("ready");
+    } else if (next.state === "unavailable") {
+      setError(next.last_error || "The original Twitch source is currently unavailable.");
+      setSourceState("missing");
+    }
+  }, [loadStatus, addLog]);
+  usePolling(pollRestore, 1000, { enabled: sourceState === "restoring" });
 
   // Not tied to the open session: a video dropped into the empty editor
   // streams through it before the Cutting Room switches to that video.
@@ -389,7 +388,9 @@ export default function CuttingRoomEditor({ session, sessions = [], onLoadSessio
           ? "Not scanned, so Auto can't find a facecam. Use Gameplay for a recording without one, or draw it."
           : framing.layout === "full_gameplay"
             ? "Drag the window on the preview to choose what the vertical clip shows."
-            : undefined,
+            : framing.layout === "vtuber_overlay" && !framing.facecam && !framingHost.cutoutFor(session.id)
+              ? "Draw a box around your avatar on the full frame. Recall cuts out its background (a few seconds the first time)."
+              : undefined,
       captions: captionsOn,
       onToggleCaptions: () => updateFraming({ ...framing, captions: !captionsOn }),
     },
@@ -398,6 +399,16 @@ export default function CuttingRoomEditor({ session, sessions = [], onLoadSessio
       <GameplayPan focusX={framing.focusX} onChange={(focusX) => updateFraming({ ...framing, focusX })} />
     ) : undefined,
     framing: framingHost,
+    // The whole frame beside the 9:16 clip: slide the Gameplay window, or
+    // move, resize or draw the facecam box right on the frame.
+    sourceView: {
+      camBox: framing.layout === "full_gameplay" ? null : framing.facecam ?? framingHost.facecamFor(session.id),
+      onCamBox: (box) => updateFraming({ ...framing, facecam: box }),
+      onClipFocus: (focusX) => updateFraming({ ...framing, focusX }),
+      gameplayOnly: framing.layout === "full_gameplay",
+      camLabel: framing.layout === "vtuber_overlay" ? "Avatar" : undefined,
+    },
+    cutout: framing.layout === "full_gameplay" ? undefined : framingHost.cutoutFor(session.id) ?? undefined,
     captionTrack,
     openClip: openClipHost,
     moments: {

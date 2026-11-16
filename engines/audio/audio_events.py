@@ -33,12 +33,25 @@ from typing import List, Optional
 import numpy as np
 
 from core.bundle_paths import get_models_dir
-from core.device import get_ort_providers
 
 SAMPLE_RATE = 16000
 WINDOW_SAMPLES = 15600          # YAMNet frame: 0.975 s @ 16 kHz
 HOP_SECONDS = 1.0               # score one window per integer second (aligns with other tracks)
 BATCH_WINDOWS = 256             # scored per ONNX call when the model accepts batches
+# The tagger runs on the CPU with two intra-op threads, never on CUDA. It is a
+# 16 MB model fed one 256-window batch at a time, so the GPU spends its time on
+# launches and copies. MEASURED 2026-11-10, whole analyze_audio_events over two
+# 25-minute VOD excerpts (1500 windows each), seconds wall / CPU:
+#     CUDA (warm session) 1.91-1.95 / 1.9     CPU 1 thread 2.38-2.41 / 2.4
+#     CPU 2 threads       1.42-1.44 / 2.8     CPU all cores 0.99 / 7.4
+# session.run is 94-97% of it in every case. Two threads beat CUDA and land
+# within half a second of every core at a third of the CPU time, which matters
+# because the scan's other work is holding those cores. Outputs: every CPU
+# thread count is bit-identical; CUDA differed by at most 0.0035 in burst and
+# 0.0025 in game_intensity (both 0..1, relative error under 1% where burst
+# cleared 0.05) with identical labels -- float rounding, far under the 0.05
+# label threshold.
+TAGGER_THREADS = 2
 
 # Class tags miss some startles because the game sting and streamer scream are
 # mixed together. A relative loudness onset is model-independent evidence of
@@ -113,7 +126,11 @@ def _load():
         return _session, _class_names
     import onnxruntime as ort
     onnx_path, map_path = _model_paths()
-    _session = ort.InferenceSession(onnx_path, providers=get_ort_providers())
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = TAGGER_THREADS
+    options.inter_op_num_threads = 1
+    _session = ort.InferenceSession(onnx_path, sess_options=options,
+                                    providers=["CPUExecutionProvider"])
     with open(map_path, newline="", encoding="utf-8") as f:
         _class_names = [row["display_name"] for row in csv.DictReader(f)]
     return _session, _class_names
@@ -188,10 +205,13 @@ def _loud_onset_scores(windows: np.ndarray) -> np.ndarray:
     return onset
 
 
-def analyze_audio_events(wav_path: str, duration: Optional[float] = None) -> Optional[List[AudioEventFrame]]:
+def analyze_audio_events(wav_path: str, duration: Optional[float] = None,
+                         cancel_check=None) -> Optional[List[AudioEventFrame]]:
     """Per-second laughter/scream burst track for the VOD.
 
     Returns None when the model files aren't installed (channel disabled).
+    ``cancel_check`` is called before the windowing and before each batch, so
+    a scan that ends while this runs beside Perception stops within a batch.
     """
     if not audio_events_available():
         return None
@@ -205,6 +225,8 @@ def analyze_audio_events(wav_path: str, duration: Optional[float] = None) -> Opt
         return None
 
     audio = _read_wav_mono16k(wav_path)
+    if cancel_check:
+        cancel_check()
     total_seconds = int(duration if duration is not None else len(audio) / SAMPLE_RATE)
     if total_seconds <= 0:
         return []
@@ -220,6 +242,8 @@ def analyze_audio_events(wav_path: str, duration: Optional[float] = None) -> Opt
 
     frames: List[AudioEventFrame] = []
     for batch_start in range(0, total_seconds, BATCH_WINDOWS):
+        if cancel_check:
+            cancel_check()
         batch = windows[batch_start:batch_start + BATCH_WINDOWS]
         scores = _score_windows(batch)
         laugh = scores[:, laugh_idx].max(axis=1) if laugh_idx else np.zeros(len(batch))

@@ -335,6 +335,8 @@ class LlamaBackend:
         # native wheel that may not build on every install); when it's absent
         # the ImportError propagates to the judge's failure path and the scan
         # continues without semantic fields.
+        from core.device import prepare_llama_cuda
+        prepare_llama_cuda()  # CUDA DLL folders on the search path before llama.dll loads
         from llama_cpp import Llama
         self._llm = Llama(
             model_path=self.model_path,

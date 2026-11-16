@@ -101,8 +101,32 @@ def check_nvenc_available() -> bool:
     global _nvenc_available
     if _nvenc_available is not None:
         return _nvenc_available
-    _nvenc_available = "h264_nvenc" in _ffmpeg_encoders()
+    _nvenc_available = "h264_nvenc" in _ffmpeg_encoders() and _nvenc_encodes()
     return _nvenc_available
+
+
+def _nvenc_encodes() -> bool:
+    """True when h264_nvenc can open on THIS machine: a few black frames,
+    encoded to nowhere.
+
+    The encoder list only says how ffmpeg was built. On a PC with no usable
+    NVIDIA GPU the listed encoder fails at open, and every export -- so every
+    scan -- failed with it (found 2026-11-16 by a scan with the GPU hidden:
+    all stages ran on the CPU, then Export died in cuInit). Probed once per
+    process; a probe that cannot run counts as no NVENC, and the CPU encoder
+    is used.
+    """
+    try:
+        res = subprocess.run(
+            [get_ffmpeg_path(), "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", "color=c=black:s=256x256:r=30:d=0.2",
+             "-c:v", "h264_nvenc", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
 
 
 def get_cpu_h264_encoder() -> str:
@@ -175,10 +199,16 @@ def build_ffmpeg_command(input_path: str, output_path: str, start: float, end: f
         facecam_subject_top, camera_cover,
     )
     overlay_mask = None
+    mask_video = None
     if layout_type == "vtuber_overlay" and vtuber_overlay:
         overlay_mask = os.path.abspath(str(vtuber_overlay.get("mask_path") or ""))
         if not os.path.isfile(overlay_mask):
             raise ValueError(f"VTuber overlay mask does not exist: {overlay_mask}")
+        # A per-frame avatar video (avatar_matting: cleaned colour + alpha),
+        # when the renderer made one, replaces the still plate.
+        candidate = vtuber_overlay.get("avatar_video")
+        if candidate and os.path.isfile(str(candidate)):
+            mask_video = os.path.abspath(str(candidate))
     filter_chains = build_video_graph(
         plan, out_w, out_h, scale_flags, preview,
         vtuber_overlay=vtuber_overlay if overlay_mask else None,
@@ -265,7 +295,10 @@ def build_ffmpeg_command(input_path: str, output_path: str, start: float, end: f
         "-ss", str(start), "-t", str(duration),
         "-i", input_path,
     ]
-    if overlay_mask:
+    if mask_video:
+        # Already exactly the clip's window, one RGBA frame per matted frame.
+        cmd += ["-t", str(duration), "-i", mask_video]
+    elif overlay_mask:
         # Give the static alpha plate the same finite timeline as the source.
         # An unbounded `-loop 1` input can otherwise extend the MP4 container
         # duration even though the visible video and audio have ended.

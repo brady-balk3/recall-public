@@ -55,7 +55,7 @@ export function PreviewToolbar({
 	);
 }
 
-function TimecodeDisplay() {
+export function TimecodeDisplay() {
 	const editor = useEditor();
 	const totalDuration = useEditor((e) => e.timeline.getTotalDuration());
 	const fps = useEditor((e) => e.project.getActive().settings.fps);
@@ -127,7 +127,7 @@ function ZoomSelect() {
 	);
 }
 
-function PlayPauseButton() {
+export function PlayPauseButton() {
 	const isPlaying = useEditor((e) => e.playback.getIsPlaying());
 
 	return (

@@ -5,7 +5,8 @@ import type { ReactNode } from "react";
 import { SessionPoster } from "../components/Posters";
 import { fmtDurationHuman } from "../lib/format";
 import { Check, Folder, Trash2, Twitch } from "../lib/icons";
-import { useJobStore, type Job, type Session } from "../lib/store";
+import { useJobStoreWhileShown } from "../lib/liveJobs";
+import type { Job, Session } from "../lib/store";
 import { undecidedClips } from "../home/homeModel";
 import { curveSeries, seriesPath } from "../scans/scanStrip";
 import { MomentCurve } from "./MomentCurve";
@@ -80,7 +81,9 @@ export function SessionCard({
   onDelete?: (session: Session) => void;
 }) {
   const scanning = SCANNING.has(session.status);
-  const job = useJobStore((state) => (scanning ? state.jobs.find((j) => j.id === session.id) ?? (state.currentJob?.id === session.id ? state.currentJob : undefined) : undefined));
+  // A page kept behind another (Home, Library) doesn't redraw its scanning
+  // card for every progress event; it catches up when shown.
+  const job = useJobStoreWhileShown((state) => (scanning ? state.jobs.find((j) => j.id === session.id) ?? (state.currentJob?.id === session.id ? state.currentJob : undefined) : undefined));
   return (
     <div className={`sess-wrap ${selected ? "is-selected" : ""}`}>
       <button

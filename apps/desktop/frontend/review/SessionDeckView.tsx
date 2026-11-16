@@ -9,10 +9,11 @@
  * Previews cleared to save space say so, with the one action that brings them
  * back. The scan log folds in at the bottom.
  */
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { Poster } from "../components/Posters";
 import RecallOriginBadge from "../components/RecallOriginBadge";
 import { apiFetch } from "../lib/api";
+import { usePolling } from "../lib/polling";
 import { fmtClock, fmtDurationHuman } from "../lib/format";
 import { ArrowLeft, Check, Clock, Film, Info, Layers, Play, RefreshCw, Scissors, X } from "../lib/icons";
 import { durationOf, primaryReviewDeckClips, secondLookClips, sortReviewClips, type ReviewSort } from "../lib/reviewDeck";
@@ -310,27 +311,26 @@ function PreviewsCleared({ session }: { session: Session }) {
   const [rebuilding, setRebuilding] = useState(false);
   const media = session.media;
 
-  useEffect(() => {
-    if (!rebuilding) return;
-    let alive = true;
-    const timer = window.setInterval(async () => {
-      try {
-        const response = await apiFetch(`/jobs/${session.id}/media-status`, undefined, settings.apiEndpoint);
-        if (!alive || !response.ok) return;
-        const status = await response.json() as { rebuild?: { status?: string } };
-        if (!alive) return;
-        if (status?.rebuild?.status !== "rebuilding") {
-          setRebuilding(false);
-          await refreshJobs();
-          await hydrateSessionClips(session.id);
-          addLog(`Clip previews rebuilt for ${session.name}.`, "success");
-        }
-      } catch {
-        // A transient engine hiccup: keep polling rather than calling it failed.
+  // Keeps going while Review sits behind another page: finishing reloads the
+  // session's clips for every page, not just this one. Waits while the window
+  // is minimized; the app reloads the library when it comes back anyway.
+  const pollRebuild = useCallback(async (isCurrent: () => boolean) => {
+    try {
+      const response = await apiFetch(`/jobs/${session.id}/media-status`, undefined, settings.apiEndpoint);
+      if (!isCurrent() || !response.ok) return;
+      const status = await response.json() as { rebuild?: { status?: string } };
+      if (!isCurrent()) return;
+      if (status?.rebuild?.status !== "rebuilding") {
+        setRebuilding(false);
+        await refreshJobs();
+        await hydrateSessionClips(session.id);
+        addLog(`Clip previews rebuilt for ${session.name}.`, "success");
       }
-    }, 3000);
-    return () => { alive = false; window.clearInterval(timer); };
-  }, [rebuilding, session.id, session.name, settings.apiEndpoint, addLog, hydrateSessionClips, refreshJobs]);
+    } catch {
+      // A transient engine hiccup: keep polling rather than calling it failed.
+    }
+  }, [session.id, session.name, settings.apiEndpoint, addLog, hydrateSessionClips, refreshJobs]);
+  usePolling(pollRebuild, 3000, { enabled: rebuilding, whileInactive: true });
 
   if (!media || (media.rebuildable === 0 && media.unavailable === 0)) return null;
   const missing = media.rebuildable + media.unavailable;

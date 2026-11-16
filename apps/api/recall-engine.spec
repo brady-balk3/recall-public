@@ -83,13 +83,13 @@ def _seal(source_path):
 # assets, bundled ONNX weights), and dynamic import graphs PyInstaller's static
 # analysis won't fully catch on its own.
 COLLECT_PACKAGES = [
-    "torch",
-    "torchvision",
-    # Not the ASR model -- that left with the fallback backend. qwen_aligner
-    # imports whisper.audio.log_mel_spectrogram, which loads the mel filter
-    # bank from whisper/assets/, and PyInstaller will not find that data file
-    # from a function-level import.
-    "whisper",
+    # torch and torchvision are NOT collected, and are excluded below
+    # (2026-11-15). No product module imports either
+    # (tests/unit/test_no_torch_imports.py), and torch was only ever here for
+    # torch/lib's CUDA 12.6 + cuDNN 9 DLLs. Those now come from NVIDIA's own
+    # wheels into one nvidia-cuda folder (see "NVIDIA CUDA runtime" below).
+    # That drops 3907 MB of torch and 24 MB of torchvision from the
+    # 2026-11-05 engine (6661 MB).
     "onnxruntime",
     "paddleocr",
     "paddlex",
@@ -97,6 +97,14 @@ COLLECT_PACKAGES = [
     "scipy",
     "uvicorn",
     "fastapi",
+    # A dev venv's llama_cpp/lib may still carry its own cudart64_12/cublas64_12/
+    # cublasLt64_12 (608 MB, byte-identical to the nvidia-cuda set), copied by
+    # an older scripts/setup_gpu_llama.py. They are dropped from the bundle
+    # after Analysis, below:
+    # the runtime hook apps/api/pyi_rth_recall_cuda.py puts nvidia-cuda on
+    # PATH before any engine code runs, and llama_cpp loads llama.dll with
+    # winmode=0, so ggml-cuda.dll resolves them there through PATH whichever
+    # of llama.cpp and onnxruntime loads first. One copy in the process.
     "llama_cpp",
     # Qwen3-ASR uses onnx-asr's bundled Silero graph for VAD and the Rust
     # tokenizers extension for the forced aligner. Both are imported lazily,
@@ -152,6 +160,8 @@ hiddenimports += [
     "core.artifacts",
     "core.migrations",
     "core.migrations.runner",
+    # Reached only through the --recall-gpu-smoke runtime hook.
+    "apps.api.engine_gpu_smoke",
 ]
 
 def _keep_runtime_submodule(name):
@@ -195,6 +205,87 @@ for pkg in COLLECT_PACKAGES:
     datas += d
     binaries += b
     hiddenimports += h
+
+# paddlex decides whether PaddleOCR may build by reading the installed
+# metadata of its "ocr-core" extra (paddlex.utils.deps.require_extra, called by
+# the OCR pipeline's constructor), not by importing the packages. The modules
+# below were bundled, but their dist-info was not, so every packaged engine
+# since at least 2026-11-05 raised DependencyError at OCR start-up and logged
+# "OCR disabled: ppocrv6_onnx_unavailable" -- a silent loss of the OCR signal.
+# Found by the 2026-11-15 packaged smoke (apps/api/engine_gpu_smoke.py) and
+# reproduced in dev by hiding exactly these five distributions' metadata.
+# opencv-contrib-python, the sixth member, already ships its dist-info.
+from PyInstaller.utils.hooks import copy_metadata
+
+for _ocr_dependency in ("imagesize", "pyclipper", "pypdfium2", "python-bidi", "shapely"):
+    datas += copy_metadata(_ocr_dependency)
+
+# --- NVIDIA CUDA runtime: one folder, from NVIDIA's wheels ------------------
+#
+# core.device.CUDA_RUNTIME_DLLS is the whole set the GPU code loads
+# (onnxruntime's CUDA EP, llama.cpp, cuDNN's sub-libraries, NVRTC); it was
+# derived from the PE import tables and lists what it leaves out and why. Each
+# file is copied from the pinned nvidia-*-cu12 wheel that ships it into
+# _internal/nvidia-cuda, where core.device's frozen-bundle provider preloads it
+# by path and the runtime hook puts it on PATH for llama.cpp. 2026-11-15: the
+# 14 files are byte-identical to the torch/lib copies the 2026-11-05 build
+# shipped (sha256), total ~1.88 GB against torch's 3907 MB.
+from core.device import CUDA_RUNTIME_DLLS, FROZEN_CUDA_DIRNAME
+import importlib.metadata as _metadata
+import importlib.util as _importlib_util
+
+# Must match scripts/requirements.txt. The DLL bytes these versions ship are
+# recorded in publish/review/nvidia-runtime-wheels-verification.json.
+_NVIDIA_WHEELS = {
+    "nvidia-cuda-runtime-cu12": "12.6.77",
+    "nvidia-cublas-cu12": "12.6.4.1",
+    "nvidia-cufft-cu12": "11.3.0.4",
+    "nvidia-cuda-nvrtc-cu12": "12.6.85",
+    "nvidia-cudnn-cu12": "9.10.2.21",
+}
+for _wheel, _version in _NVIDIA_WHEELS.items():
+    try:
+        _installed = _metadata.version(_wheel)
+    except _metadata.PackageNotFoundError:
+        _installed = None
+    if _installed != _version:
+        raise RuntimeError(
+            f"{_wheel}=={_version} is required to package the CUDA runtime "
+            f"(found {_installed}); install the pins in scripts/requirements.txt.")
+_ort_locations = list(_importlib_util.find_spec("onnxruntime").submodule_search_locations)
+_nvidia_root = os.path.join(os.path.dirname(_ort_locations[0]), "nvidia")
+_nvidia_sources = {}
+for _wheel_dir in sorted(os.listdir(_nvidia_root)):
+    _bin = os.path.join(_nvidia_root, _wheel_dir, "bin")
+    for _name in (os.listdir(_bin) if os.path.isdir(_bin) else []):
+        if _name in CUDA_RUNTIME_DLLS:
+            if _name in _nvidia_sources:
+                raise RuntimeError(f"{_name} is shipped by two nvidia wheels")
+            _nvidia_sources[_name] = os.path.join(_bin, _name)
+_missing_cuda = [name for name in CUDA_RUNTIME_DLLS if name not in _nvidia_sources]
+if _missing_cuda:
+    raise FileNotFoundError(
+        f"CUDA runtime DLLs missing from {_nvidia_root}: {_missing_cuda}. "
+        "A bundle without them runs every GPU stage on the CPU.")
+binaries += [(_nvidia_sources[name], FROZEN_CUDA_DIRNAME) for name in CUDA_RUNTIME_DLLS]
+# Every other NVIDIA-runtime-named native file is kept out of the release by
+# name (the filter after Analysis and the walk after COLLECT). That covers the
+# wheels' extras (nvblas64_12, cufftw64_11, nvrtc64_120_0.alt), the
+# llama_cpp/lib duplicates, and the torch-era files the NVIDIA terms review
+# flagged (nvperf_host, cusolverMg64_11), should any hook ever find them.
+_CUDA_FAMILY_PREFIXES = (
+    "cu", "nvrtc", "nvjitlink", "nvblas", "nvperf", "nvtoolsext", "cupti", "zlibwapi",
+)
+_cuda_runtime_names = {name.casefold() for name in CUDA_RUNTIME_DLLS}
+
+
+def _is_unreviewed_cuda_file(destination):
+    name = os.path.basename(destination).casefold()
+    if not (name.endswith(".dll") and name.startswith(_CUDA_FAMILY_PREFIXES)):
+        return False
+    folder = os.path.normcase(os.path.normpath(os.path.dirname(destination)))
+    return not (name in _cuda_runtime_names
+                and folder == os.path.normcase(FROZEN_CUDA_DIRNAME))
 
 # --- Bundled resources resolved at runtime via core/bundle_paths.py ---
 
@@ -251,6 +342,26 @@ if not os.path.exists(_face_landmarker):
         "before packaging."
     )
 datas.append((str(_model_payload.verify_source(_face_landmarker, asset=True)), os.path.join("models", "face")))
+
+# The landmarker's runtime. mediapipe 1.x loads tasks/c/libmediapipe.dll with
+# ctypes (resources.files("mediapipe.tasks.c")), which PyInstaller's import
+# analysis cannot see, so the bundle had the Python package and the weights
+# but not the library: the blendshape scorer disabled itself in every packaged
+# build and scans had no face channel (found 2026-11-16 by a scan through the
+# build: 0 of 11648 frames with a face). The GPU smoke entry point now loads
+# the landmarker, so a build without it fails the smoke test.
+import importlib.util as _importlib_util
+_mediapipe_spec = _importlib_util.find_spec("mediapipe")
+_mediapipe_lib = os.path.join(
+    os.path.dirname(_mediapipe_spec.origin), "tasks", "c", "libmediapipe.dll",
+) if _mediapipe_spec and _mediapipe_spec.origin else ""
+if not os.path.isfile(_mediapipe_lib):
+    raise FileNotFoundError(
+        "Expected mediapipe/tasks/c/libmediapipe.dll in the build environment; "
+        "the face scorer cannot run without it."
+    )
+binaries.append((_mediapipe_lib, os.path.join("mediapipe", "tasks", "c")))
+hiddenimports.append("mediapipe.tasks.c")
 
 # Stream Memory sentence embeddings. This is a creator-facing search feature,
 # not part of scan inference, but omitting it silently drops Meaning + words
@@ -650,7 +761,15 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    # In this order, before main.py, in the API process and every worker:
+    # 1. nvidia-cuda goes on PATH before any `import llama_cpp` (why the
+    #    llama_cpp/lib CUDA copies can be dropped below);
+    # 2. `--recall-gpu-smoke <report.json>` runs the GPU/CPU diagnostic
+    #    (apps/api/engine_gpu_smoke.py) and exits; the app never passes it.
+    runtime_hooks=[
+        os.path.join(PROJECT_ROOT, "apps", "api", "pyi_rth_recall_cuda.py"),
+        os.path.join(PROJECT_ROOT, "apps", "api", "pyi_rth_recall_gpu_smoke.py"),
+    ],
     # matplotlib is still NOT excluded, but the reason is now only historical:
     # it existed because ultralytics' __init__ resolved through a chain that
     # imported matplotlib.pyplot at load time. Ultralytics is gone (replaced by
@@ -683,24 +802,22 @@ a = Analysis(
         "jupyter",
         "notebook",
         "sphinx",
-        "torch.utils.benchmark",
-        "torch.distributed.elastic",
-        "torch.distributed.fsdp",
-        # NOT torch.testing or torch.distributed.rpc, despite the names
-        # sounding safe to trim. torch/autograd/gradcheck.py imports
-        # torch.testing unconditionally, and torch/_jit_internal.py imports
-        # torch.distributed.rpc unconditionally -- both are on the core
-        # `import torch` chain (autograd -> nn.modules -> torch.__init__),
-        # not opt-in features. Every `import torch` needs them, on every
-        # machine, whether or not their nominal purpose (test helpers, RPC)
-        # is ever used. Excluding either doesn't trim an unused feature -- it
-        # breaks `import torch` entirely, which get_torch_device()'s
-        # try/except then silently swallowed into "cpu" (see core/device.py),
-        # reporting CPU-only on GPU-equipped machines. The three excludes
-        # that remain above were checked: each is only referenced from
-        # peripheral torch.profiler / torch.distributed.checkpoint /
-        # torch.distributed.launcher modules that are not part of the core
-        # init chain.
+        # The torch family is excluded, not merely uncollected (2026-11-15).
+        # Bundled packages still name it in optional imports that static
+        # analysis follows: onnxruntime.transformers/tools/quantization (73
+        # files), scipy's array-API compatibility layer, paddlex (10 lazy
+        # sites), and modelscope, whose logger imports torch whenever it is
+        # findable. Each treats ImportError as "no torch", which is the state
+        # this bundle is built for; engines/ocr/ocr.py hides torch around the
+        # PaddleOCR import in dev for the same reason. Without these entries
+        # the torch hook would pull the whole package (3.9 GB) back in.
+        "torch",
+        "torchvision",
+        "torchaudio",
+        # The torch-based Kaldi fbank kept as a test reference for the numpy
+        # port (engines/caption/kaldi_fbank.py). Nothing in the engine imports
+        # it; listed so it cannot ride in through a stray import.
+        "tests.unit.kaldi_fbank_torch_reference",
     ],
     noarchive=False,
     # -O equivalent: strips `assert` statements from the compiled bytecode, so
@@ -725,18 +842,31 @@ a = Analysis(
 # PATH may contain unrelated application runtimes. Do not silently redistribute
 # their DLLs merely because PyInstaller found them before the intended runtime.
 a.binaries = pin_microsoft_runtime_inputs(a.binaries, _microsoft_runtime_root)
-# These helpers have no static consumers in the frozen native graph. Recall
-# does not invoke CUDA profiling or multi-GPU solver APIs. A synthetic scan
-# with three GPU perception workers, caption export and two rerenders passed
-# with both cuSOLVERMg and alternate NVRTC omitted. Keep the exact-named files
-# out of release output, even if a future torch hook discovers them.
-_omitted_cuda_files = {
-    "nvperf_host.dll", "cusolvermg64_11.dll", "nvrtc64_120_0.alt.dll",
-}
-a.binaries = [
-    entry for entry in a.binaries
-    if os.path.basename(entry[0]).casefold() not in _omitted_cuda_files
-]
+# NVIDIA runtime DLLs ship once, from the list above, in nvidia-cuda. This
+# replaces the torch-era exact-name omissions (nvperf_host, cusolverMg64_11,
+# nvrtc64_120_0.alt), which an allowlist covers. What it removes in practice:
+# PyInstaller's dependency analysis resolves cublas64_12 -> cublasLt64_12 and
+# cudnn_* -> cudnn_graph/cudnn_ops next to their wheel sources and would add
+# second copies under nvidia/<wheel>/bin, and collect_all("llama_cpp") brings
+# the dev venv's 608 MB llama_cpp/lib copies.
+_dropped_cuda = sorted({entry[0] for entry in a.binaries if _is_unreviewed_cuda_file(entry[0])})
+a.binaries = [entry for entry in a.binaries if not _is_unreviewed_cuda_file(entry[0])]
+print(f"recall-engine.spec: kept {len(CUDA_RUNTIME_DLLS)} CUDA runtime DLLs in "
+      f"{FROZEN_CUDA_DIRNAME}; dropped {_dropped_cuda}")
+# PyInstaller collects a distribution's metadata when bundled code calls
+# importlib.metadata.version() on a literal name; modelscope's import_utils
+# does so for "torch" (behind a find_spec check). The first torch-free build
+# (2026-11-15) therefore shipped torch-2.12.1+cu126.dist-info with no torch
+# package, which would tell any metadata-based check that torch is installed.
+_TORCH_METADATA = ("torch-", "torchvision-", "torchaudio-")
+
+
+def _is_torch_metadata(destination):
+    top = os.path.normpath(destination).split(os.sep)[0].casefold()
+    return top.startswith(_TORCH_METADATA) and top.endswith(".dist-info")
+
+
+a.datas = [entry for entry in a.datas if not _is_torch_metadata(entry[0])]
 verify_native_inputs(a.binaries, [
     sys.prefix, sys.base_prefix, os.path.join(PROJECT_ROOT, "vendor"),
     _twitchdl_dir,  # Exact CLI bytes were pinned before Analysis.
@@ -782,11 +912,27 @@ coll = COLLECT(
     name="recall-engine",
 )
 
-# Catch a future hook that adds an omitted file through data collection or a
-# different binary destination, rather than silently distributing it again.
-for _folder, _dirs, _files in os.walk(coll.name):
-    if any(name.casefold() in _omitted_cuda_files for name in _files):
-        raise RuntimeError("Unreviewed CUDA helper entered the release payload: " + _folder)
+# Catch a CUDA file that arrived through data collection or a different
+# destination, and a torch package that came back through a hook: both would
+# ship silently otherwise. Then confirm the CUDA set is complete, so a bundle
+# can never pass the build and run its GPU stages on the CPU.
+_internal_root = os.path.join(coll.name, coll.contents_directory or "")
+for _folder, _dirs, _files in os.walk(_internal_root):
+    _relative = os.path.relpath(_folder, _internal_root)
+    if (_relative.split(os.sep)[0].casefold() in ("torch", "torchvision", "torchaudio")
+            or _is_torch_metadata(_relative)):
+        raise RuntimeError("torch entered the release payload: " + _folder)
+    for _name in _files:
+        if _is_unreviewed_cuda_file(os.path.join(_relative, _name)):
+            raise RuntimeError(
+                "Unreviewed CUDA file entered the release payload: "
+                + os.path.join(_folder, _name))
+_bundled_cuda = os.path.join(_internal_root, FROZEN_CUDA_DIRNAME)
+_bundled_missing = [name for name in CUDA_RUNTIME_DLLS
+                    if not os.path.isfile(os.path.join(_bundled_cuda, name))]
+if _bundled_missing:
+    raise RuntimeError(f"CUDA runtime DLLs missing from {_bundled_cuda}: {_bundled_missing}")
+print(f"recall-engine.spec: CUDA runtime verified in {FROZEN_CUDA_DIRNAME}, no torch")
 
 _twitchdl_output = os.path.join(coll.name, coll.contents_directory or "", "twitchdownloader")
 for _name, _expected_hash in _twitchdl_files.items():

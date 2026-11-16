@@ -50,6 +50,7 @@ import {
 } from "../lib/icons";
 import { apiFetch, apiUrl } from "../lib/api";
 import { fmtClock, fmtDurationHuman } from "../lib/format";
+import { usePolling } from "../lib/polling";
 import { plural } from "../lib/copy";
 import {
   approveCompilationProject,
@@ -622,30 +623,25 @@ export default function CompilationProjects({
   }, [apiEndpoint]);
 
   const preparationStatus = preparation?.preparation?.status;
-  useEffect(() => {
-    const projectId = project?.id;
-    if (!projectId || !preparationStatus || !ACTIVE_PREPARATION.has(preparationStatus)) return;
-    let active = true;
-    const refresh = async () => {
-      try {
-        const [plan, refreshed] = await Promise.all([
-          getCompilationPreparation(projectId, apiEndpoint),
-          getCompilationProject(projectId, apiEndpoint),
-        ]);
-        if (!active) return;
-        setPreparation(plan);
-        setProject(refreshed);
-        setProjects((current) => current.map((entry) => entry.id === refreshed.id ? refreshed : entry));
-      } catch (error) {
-        if (active) setMessage(error instanceof Error ? error.message : "Source preparation status is unavailable.");
-      }
-    };
-    const timer = window.setInterval(() => void refresh(), 1200);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [apiEndpoint, preparationStatus, project?.id]);
+  const preparingProjectId = project?.id && preparationStatus && ACTIVE_PREPARATION.has(preparationStatus) ? project.id : undefined;
+  // Status for this page only: waits while the window is minimized, and a
+  // slow reply never has a second request stacked behind it.
+  const pollPreparation = useCallback(async (isCurrent: () => boolean) => {
+    if (!preparingProjectId) return;
+    try {
+      const [plan, refreshed] = await Promise.all([
+        getCompilationPreparation(preparingProjectId, apiEndpoint),
+        getCompilationProject(preparingProjectId, apiEndpoint),
+      ]);
+      if (!isCurrent()) return;
+      setPreparation(plan);
+      setProject(refreshed);
+      setProjects((current) => current.map((entry) => entry.id === refreshed.id ? refreshed : entry));
+    } catch (error) {
+      if (isCurrent()) setMessage(error instanceof Error ? error.message : "Source preparation status is unavailable.");
+    }
+  }, [apiEndpoint, preparationStatus, preparingProjectId]);
+  usePolling(pollPreparation, 1200, { enabled: !!preparingProjectId });
 
   const [recipes, setRecipes] = useState<CompilationRecipe[]>([]);
   const [sessions, setSessions] = useState<ScannedSession[]>([]);

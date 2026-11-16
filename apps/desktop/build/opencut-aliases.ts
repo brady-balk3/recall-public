@@ -14,12 +14,6 @@ const shim = (file: string) => path.join(root, "shims", file);
 
 export const openCutAliases = [
   { find: /^@opencut\//, replacement: `${path.join(root, "src").split(path.sep).join("/")}/` },
-  { find: /^next\/link$/, replacement: shim("next-link.tsx") },
   { find: /^next\/image$/, replacement: shim("next-image.tsx") },
   { find: /^next\/navigation$/, replacement: shim("next-navigation.ts") },
-  { find: /^next\/script$/, replacement: shim("empty.tsx") },
-  { find: /^next\/dynamic$/, replacement: shim("next-dynamic.tsx") },
-  { find: /^next-themes$/, replacement: shim("next-themes.tsx") },
-  { find: /^content-collections$/, replacement: shim("content-collections.ts") },
-  { find: /^@huggingface\/transformers$/, replacement: shim("transformers.ts") },
 ];

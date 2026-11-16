@@ -69,6 +69,7 @@ function buildTrackNodes({
 					nodes.push(
 						new VideoNode({
 							mediaId: mediaAsset.id,
+							elementId: element.id,
 							url: mediaAsset.url,
 							file: mediaAsset.file,
 							duration: element.duration,

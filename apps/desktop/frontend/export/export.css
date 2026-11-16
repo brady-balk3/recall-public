@@ -37,6 +37,9 @@
 
 .x-clips { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
 .x-clip { position: relative; display: grid; gap: 6px; align-content: start; }
+/* A card not built yet (ExportView ClipGrid): the frame's shape, plus the room
+   its title and time take below it, so the group is already its real size. */
+.x-ph { aspect-ratio: 9 / 16; margin-bottom: 58px; border-radius: 16px; background: rgba(127, 127, 127, .08); }
 .x-clip .fr {
   position: relative;
   aspect-ratio: 9 / 16;

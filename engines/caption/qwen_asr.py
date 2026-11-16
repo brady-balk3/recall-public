@@ -26,7 +26,7 @@ Whisper supplied three things, and all three are replaced here:
 The output is the same dict every consumer already reads --
 ``{"segments": [{id, start, end, text, words: [{word, start, end}]}]}`` -- so
 `vod_transcribe`, `asr_hype`, `sentence_index`, `judge`, `caption_generator` and
-`generate_ass_for_clip` are untouched. `whisper_asr.get_whisper_model()` hands
+`generate_ass_for_clip` are untouched. `asr.get_asr_model()` hands
 them this adapter; it is the only backend, the faster-whisper rung having been
 removed on 2026-09-01.
 
@@ -37,6 +37,7 @@ region to its last, so a quiet stretch costs nothing.
 from __future__ import annotations
 
 import collections
+import contextlib
 import os
 import re
 import subprocess
@@ -50,7 +51,7 @@ from core.bundle_paths import (
     get_qwen_asr_dir,
     get_silero_vad_dir,
 )
-from core.device import get_ort_providers, get_torch_device
+from core.device import get_torch_device
 from core.ffmpeg_path import get_ffmpeg_path
 from engines.caption.qwen_aligner import QwenForcedAligner, split_words
 
@@ -85,9 +86,21 @@ MAX_CARRY_SILENCE_SEC = 2.0
 # VAD runs over the file in blocks so a four-hour VOD never becomes a 14 GB
 # float array. 10 minutes is 38 MB.
 VAD_BLOCK_SEC = 600.0
+# Blocks handed to one segment_batch call. Silero steps through the audio one
+# 32 ms frame per session run, so per-run overhead dominates and a batch
+# amortises it. MEASURED 2026-11-09 on CPU, seconds per 600s block:
+#     1: 2.01   2: 1.43   4: 0.95   6: 0.87   8: 0.82
+# 4 takes most of the gain for a 146 MB batch array; 8 would double that to
+# shave another 0.13s per block. Rows are bit-identical to unbatched runs.
+VAD_BATCH_BLOCKS = 4
+# One intra-op thread. onnxruntime's default pool spreads each tiny frame step
+# across every core for nothing: MEASURED 2026-11-10 on two 25-minute excerpts,
+# all cores took 4.1s wall and 18.5s CPU, one thread 4.5s wall and 4.2s CPU,
+# with identical regions. This pass now runs beside Perception's workers.
+VAD_THREADS = 1
 
 # A pause this long ends a transcript segment, matching the caption chunker's
-# own pacing constant (whisper_asr.CHUNK_GAP_SEC).
+# own pacing constant (asr.CHUNK_GAP_SEC).
 SEGMENT_GAP_SEC = 0.9
 SEGMENT_MAX_WORDS = 30
 
@@ -144,16 +157,45 @@ def speech_regions(path: str, duration: float,
     """
     import onnx_asr
 
-    # Preload torch's CUDA/cuDNN before onnxruntime builds a session, or the
-    # CUDA provider fails with "cublasLt64_12.dll is missing" and silently
-    # drops to CPU (core/device.py owns this).
-    get_ort_providers()
     # onnx-asr ships the loader, not the Silero weights. Frozen builds pass the
     # required bundled directory so a first scan never reaches Hugging Face;
     # dev keeps None and uses onnx-asr's normal local cache resolution.
-    vad = onnx_asr.load_vad("silero", path=get_silero_vad_dir())
+    #
+    # CPU, never CUDA. Silero is a 2 MB model run once per 32 ms frame, so on
+    # the GPU every frame pays a launch and a copy for almost no arithmetic.
+    # MEASURED 2026-11-09 on 25 minutes of VOD audio: 35.9s on CUDA, 5.5s on
+    # CPU; across 98 minutes from three VODs the region counts matched and 5
+    # of 1546 regions moved one 32 ms frame. In real scans the CUDA pass cost
+    # 214-496s per VOD. A CPU session needs none of core.device's CUDA DLL
+    # preloading, so get_ort_providers() is no longer called here.
+    import onnxruntime as ort
+
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = VAD_THREADS
+    options.inter_op_num_threads = 1
+    vad = onnx_asr.load_vad("silero", path=get_silero_vad_dir(), sess_options=options,
+                            providers=["CPUExecutionProvider"])
 
     regions: List[Tuple[float, float]] = []
+    pending: List[Tuple[float, np.ndarray]] = []
+
+    def flush():
+        # Only equal-length blocks share a batch. Padding a short block and
+        # passing its true length looks equivalent, but Silero would then run
+        # on into the zeros, and a region open at the block's end can merge or
+        # split differently in onnx-asr's max-speech rule. One length per batch
+        # keeps every block's regions identical to running it alone.
+        if not pending:
+            return
+        starts = [start for start, _ in pending]
+        batch = np.stack([block for _, block in pending]).astype(np.float32, copy=False)
+        pending.clear()
+        lengths = np.full(len(starts), batch.shape[1], dtype=np.int64)
+        for start, found in zip(starts, vad.segment_batch(batch, lengths, SAMPLE_RATE)):
+            for begin, end in found:
+                regions.append((start + begin / SAMPLE_RATE,
+                                start + end / SAMPLE_RATE))
+
     offset = 0.0
     while offset < duration:
         if cancel_check:
@@ -161,13 +203,13 @@ def speech_regions(path: str, duration: float,
         span = min(VAD_BLOCK_SEC, duration - offset)
         block = read_slice(path, offset, span)
         if block.size:
-            found = next(vad.segment_batch(
-                block[None, :].astype(np.float32),
-                np.asarray([block.size], dtype=np.int64), SAMPLE_RATE))
-            for begin, end in found:
-                regions.append((offset + begin / SAMPLE_RATE,
-                                offset + end / SAMPLE_RATE))
+            if pending and pending[0][1].size != block.size:
+                flush()
+            pending.append((offset, block))
+            if len(pending) >= VAD_BATCH_BLOCKS:
+                flush()
         offset += span
+    flush()
 
     merged: List[Tuple[float, float]] = []
     for begin, end in sorted(regions):
@@ -312,6 +354,10 @@ def _audio_chat_handler():
       Qwen3-ASR's template cannot index ("can only concatenate str (not list)
       to str"). Flattening to a string with the media marker inline fixes it.
     """
+    # llama.dll links the CUDA runtime statically; register the folder that
+    # holds it before llama_cpp first loads (core.device, loads nothing).
+    from core.device import prepare_llama_cuda
+    prepare_llama_cuda()
     from llama_cpp._utils import suppress_stdout_stderr
     from llama_cpp.llama_chat_format import MTMDChatHandler
 
@@ -471,6 +517,8 @@ class QwenASRAdapter:
 
     def __init__(self, chunk_target: float = CHUNK_TARGET_SEC,
                  chunk_max: float = CHUNK_MAX_SEC):
+        from core.device import prepare_llama_cuda
+        prepare_llama_cuda()  # before llama_cpp loads llama.dll (see _audio_chat_handler)
         from llama_cpp import Llama
 
         backbone, projector = _model_files()
@@ -502,6 +550,14 @@ class QwenASRAdapter:
     def _words_for_chunk(self, audio: np.ndarray, context: str) -> Tuple[str, List[Dict]]:
         """Transcribe one chunk and time its words. Returns (text, words)."""
         text = self._transcribe_chunk(audio, context)
+        if not text.strip() and context:
+            # The speech detector found speech here and the decode is empty:
+            # ask once more without the background. MEASURED 2026-11-16 on a
+            # 6.2 s chunk of a match-win clip (game audio, a teammate, then
+            # the streamer's "Yay!"): with the background the model returned
+            # nothing, twice; without it, "29. Are we? W. Yay!". The clip
+            # shipped with no caption for the one thing she said.
+            text = self._transcribe_chunk(audio, "")
         if not text.strip():
             return "", []
 
@@ -602,7 +658,8 @@ class QwenASRAdapter:
     def transcribe(self, audio_path, word_timestamps=True, language=None,
                    condition_on_previous_text=True, cancel_check=None,
                    progress_callback=None, vad_filter=False,
-                   initial_prompt=None, words_callback=None, **_ignored) -> Dict:
+                   initial_prompt=None, words_callback=None, regions=None,
+                   step_timer=None, **_ignored) -> Dict:
         """Transcribe a whole file. Returns the openai-whisper result dict.
 
         ``initial_prompt`` becomes the biasing context rather than a decoder
@@ -618,13 +675,21 @@ class QwenASRAdapter:
         time) as soon as the chunk is aligned, so a live view can draw speech
         while the pass is still running. It is display-only: a failing hook is
         logged and transcription carries on.
+
+        ``regions``, when given, are this file's speech regions as
+        ``speech_regions`` returns them, computed earlier by the caller; the
+        VAD pass is then skipped. ``step_timer(name)``, when given, returns a
+        context manager the speech detection runs inside, so a scan can report
+        it apart from the transcription it feeds.
         """
         _ = (word_timestamps, condition_on_previous_text, vad_filter)
         if cancel_check:
             cancel_check()
 
         duration = audio_duration(audio_path)
-        regions = speech_regions(audio_path, duration, cancel_check=cancel_check)
+        if regions is None:
+            with (step_timer("speech_detection") if step_timer else contextlib.nullcontext()):
+                regions = speech_regions(audio_path, duration, cancel_check=cancel_check)
         chunks = plan_chunks(regions, self.chunk_target, self.chunk_max)
 
         builder = ContextBuilder(initial_prompt)

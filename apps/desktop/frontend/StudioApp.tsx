@@ -39,21 +39,19 @@ import { isInteractiveKeyboardTarget } from "./lib/keyboard";
 import type { NewStreamKind, View } from "./shell/views";
 import { Poster, pickSessionPosterClip } from "./components/Posters";
 import { Sidebar } from "./shell/Sidebar";
+import { ViewPanel } from "./shell/ViewPanel";
 import { WindowChrome } from "./shell/WindowChrome";
 import { CommandPalette } from "./shell/CommandPalette";
 import type { PaletteCommand, PaletteSession } from "./shell/paletteItems";
 import { shellCounts } from "./shell/shellModel";
 import { queueLane } from "./scans/scanModel";
-import { NewScanView } from "./scans/NewScanView";
 import { InsightsView } from "./insights/InsightsView";
 import { ReelView } from "./export/ReelView";
 import { ExportTabs } from "./export/ExportTabs";
-import { queueWaitSeconds, useScanRates } from "./scans/estimate";
-import { LiveScanView } from "./scans/LiveScanView";
+import { useScanRates } from "./scans/estimate";
 import { SessionDeckView, type ReviewFilter } from "./review/SessionDeckView";
 import { titleSuggestsVtuberMode, type BatchRow, type ImportMode, type ProbeMeta } from "./scans/importModel";
-import { ScansView } from "./scans/ScansView";
-import { HomeView } from "./home/HomeView";
+import { LiveHomeView, LiveNewScanView, LiveScansView, ProcessingScanView } from "./shell/LiveViews";
 import { LibraryView } from "./library/LibraryView";
 import { ReviewIndex } from "./review/ReviewIndex";
 import { SourceRestoreStrip, useSourceRestore } from "./review/SourceRestore";
@@ -62,6 +60,7 @@ import { SettingsPage, type SettingsSection } from "./settings/SettingsPage";
 import { HypeMeter, PostingCoach, postFirstId } from "./review/PostingCoach";
 import { waitingSessions, type ChecklistStep } from "./home/homeModel";
 import { useRecallLive } from "./lib/useRecallLive";
+import { useJobList } from "./lib/liveJobs";
 import { PetLayer, prefersReducedMotion } from "./pets/PetLayer";
 import { useCrew } from "./pets/petStore";
 import { PET_UNLOCK_2 } from "./pets/petArt";
@@ -98,6 +97,8 @@ const terminal = new Set(["completed", "failed", "cancelled"]);
 
 type RevealRect = { left: number; top: number; width: number; height: number };
 type ScanRevealSnapshot = { jobId: string; cards: Array<{ clipId: string; rect: RevealRect }> };
+/** The scan page's job: the store's currentJob, a job in the list, or a stand-in made from a session with no live job. */
+type ProcessingPick = { id: string; current: boolean; stub?: Job };
 
 
 function useModalFocus<T extends HTMLElement>(open: boolean, onClose: () => void) {
@@ -160,9 +161,7 @@ function useModalFocus<T extends HTMLElement>(open: boolean, onClose: () => void
 
 export default function StudioApp() {
   const {
-    jobs,
     sessions,
-    currentJob,
     currentSessionId,
     settings,
     startJob,
@@ -176,7 +175,6 @@ export default function StudioApp() {
     loadMoreCandidates,
     prepareClipPreview,
     loadRemoteSettings,
-    exportOperation,
     setCurrentSessionId,
     toggleSaveClip,
     setClipPassed,
@@ -190,9 +188,7 @@ export default function StudioApp() {
     editClip,
     updateClipTitle,
   } = useJobStore(useShallow((state) => ({
-    jobs: state.jobs,
     sessions: state.sessions,
-    currentJob: state.currentJob,
     currentSessionId: state.currentSessionId,
     settings: state.settings,
     startJob: state.startJob,
@@ -206,7 +202,6 @@ export default function StudioApp() {
     loadMoreCandidates: state.loadMoreCandidates,
     prepareClipPreview: state.prepareClipPreview,
     loadRemoteSettings: state.loadRemoteSettings,
-    exportOperation: state.exportOperation,
     setCurrentSessionId: state.setCurrentSessionId,
     toggleSaveClip: state.toggleSaveClip,
     setClipPassed: state.setClipPassed,
@@ -220,6 +215,19 @@ export default function StudioApp() {
     editClip: state.editClip,
     updateClipTitle: state.updateClipTitle,
   })));
+  // Not the jobs themselves: a scan patches its job several times a second,
+  // and reading it here redrew the whole shell for every event (200 renders of
+  // StudioApp, the sidebar and the open page for a 200-event burst). The shell
+  // acts on which jobs exist and their status; the views that draw progress
+  // read it themselves (lib/liveJobs).
+  const jobs = useJobList();
+  const currentJobId = useJobStore((state) => state.currentJob?.id);
+  const currentJobStatus = useJobStore((state) => state.currentJob?.status);
+  // Same for an export: it is polled several times a second and every poll is
+  // a new object. The shell only needs which export and its status; the dock
+  // reads the progress itself.
+  const exportId = useJobStore((state) => state.exportOperation?.id);
+  const exportStatus = useJobStore((state) => state.exportOperation?.status);
   const [view, setView] = useState<View>("home");
   const [theaterReturn, setTheaterReturn] = useState<View>("review");
   const [cuttingReturn, setCuttingReturn] = useState<View>("review");
@@ -310,11 +318,12 @@ export default function StudioApp() {
     sessions.filter((session) => session.status === "completed").length,
   );
 
-  const processingJob = useMemo<Job | undefined>(() => {
+  // Which job the scan page shows, decided from ids and statuses alone. The
+  // page reads that job's live numbers itself (ProcessingScanView).
+  const processingPick = useMemo<ProcessingPick | undefined>(() => {
     const activeId = selectedSessionId ?? currentSessionId;
-    if (currentJob && (currentJob.id === activeId || !activeSession)) return currentJob;
-    const selectedLiveJob = jobs.find((job) => job.id === activeId);
-    if (selectedLiveJob) return selectedLiveJob;
+    if (currentJobId && (currentJobId === activeId || !activeSession)) return { id: currentJobId, current: true };
+    if (activeId && jobs.some((job) => job.id === activeId)) return { id: activeId, current: false };
     // A session is explicitly open but has no live job of its own.
     //
     // This used to fall through to `return currentJob`, which rendered a
@@ -334,16 +343,23 @@ export default function StudioApp() {
         : "Scanning";
       return {
         id: activeSession.id,
-        url: activeSession.sourceUrl,
-        status: activeSession.status,
-        progress: activeSession.status === "completed" ? 100 : 0,
-        stage: { label: stageLabel, progress: activeSession.status === "completed" ? 100 : 0 },
-        createdAt: activeSession.createdAt,
-        message: activeSession.message,
+        current: false,
+        stub: {
+          id: activeSession.id,
+          url: activeSession.sourceUrl,
+          status: activeSession.status,
+          progress: activeSession.status === "completed" ? 100 : 0,
+          stage: { label: stageLabel, progress: activeSession.status === "completed" ? 100 : 0 },
+          createdAt: activeSession.createdAt,
+          message: activeSession.message,
+        },
       };
     }
-    return currentJob;
-  }, [currentJob, activeSession, selectedSessionId, currentSessionId, jobs]);
+    return undefined;
+  }, [currentJobId, activeSession, selectedSessionId, currentSessionId, jobs]);
+  const processingId = processingPick?.id;
+  const processingStatus = processingPick?.stub?.status
+    ?? (processingPick?.current ? currentJobStatus : jobs.find((job) => job.id === processingId)?.status);
   const originalActiveClips = useMemo(
     () => primaryReviewDeckClips(activeSession?.clips ?? []),
     [activeSession?.clips],
@@ -417,17 +433,6 @@ export default function StudioApp() {
   const petsRoaming = crewRoam && !!shellCountsNow.scan && !petsStayHome && !prefersReducedMotion();
   const sessionsLoaded = useJobStore((state) => state.sessionsLoaded);
   useAppMoments(sessions, jobs, sessionsLoaded);
-  const homeScan = useMemo(() => {
-    const running = jobs.find((job) => ["analyzing", "detecting", "assembling"].includes(job.status));
-    if (!running || !shellCountsNow.scan) return undefined;
-    return {
-      title: shellCountsNow.scan.title,
-      progress: shellCountsNow.scan.progress,
-      stage: running.stage?.label,
-      etaSeconds: running.etaSeconds,
-      found: running.clips ?? [],
-    };
-  }, [jobs, shellCountsNow.scan]);
 
   useGlassHighlight();
   // The background is lit by what's on screen: the open session, else the newest one.
@@ -447,8 +452,8 @@ export default function StudioApp() {
   }, [view, settings.theme, settings.accent, settings.captionColor]);
 
   const activeDesktopWork = useMemo(
-    () => hasActiveDesktopWork(jobs, sessions, exportOperation),
-    [jobs, sessions, exportOperation],
+    () => hasActiveDesktopWork(jobs, sessions, exportStatus ? { status: exportStatus } : undefined),
+    [jobs, sessions, exportStatus],
   );
   useEffect(() => {
     void window.electronAPI?.setWorkProtection?.(
@@ -496,6 +501,7 @@ export default function StudioApp() {
     }
 
     const previousExport = previousExportRef.current;
+    const exportOperation = useJobStore.getState().exportOperation;
     if (exportOperation
       && previousExport?.id === exportOperation.id
       && (previousExport.status === "queued" || previousExport.status === "running")
@@ -505,10 +511,10 @@ export default function StudioApp() {
 
     previousScanStatusesRef.current = currentStatuses;
     previousBatchActiveRef.current = batchActive;
-    previousExportRef.current = exportOperation
-      ? { id: exportOperation.id, status: exportOperation.status }
+    previousExportRef.current = exportId && exportStatus
+      ? { id: exportId, status: exportStatus }
       : undefined;
-  }, [jobs, sessions, batchJobIds, exportOperation, settings.desktopNotifications]);
+  }, [jobs, sessions, batchJobIds, exportId, exportStatus, settings.desktopNotifications]);
 
   useEffect(() => {
     try { localStorage.setItem("recall-second-look-sessions", JSON.stringify([...secondLookSessions])); } catch {}
@@ -701,7 +707,7 @@ export default function StudioApp() {
   }, [activeSession?.id, view, settings.apiEndpoint]);
 
   useEffect(() => {
-    if (!currentJob) return;
+    if (!currentJobId || !currentJobStatus) return;
     // Batch queue owns navigation while it is open. Individual job updates
     // refresh the selected detail pane without pulling the creator into the
     // single-scan screen or opening review when the first queued job finishes.
@@ -710,17 +716,17 @@ export default function StudioApp() {
     }
     // Mid-scan: only pull into processing if the creator is still on the import
     // step. Leaving to Home/Sessions must stay allowed.
-    if (!terminal.has(currentJob.status)) {
+    if (!terminal.has(currentJobStatus)) {
       if (view === "add-vod") setView("processing");
       return;
     }
     // Completion auto-advance only from the live scan screen. Including add-vod
     // here re-triggers after a finished job and blocks starting a second session.
-    if (currentJob.status !== "completed" || view !== "processing") return;
+    if (currentJobStatus !== "completed" || view !== "processing") return;
     // If the processing screen is showing a different live job (queue bridge),
     // don't steal focus when the focused/current job completes.
     const watchingId = selectedSessionId ?? currentSessionId;
-    if (watchingId && watchingId !== currentJob.id) return;
+    if (watchingId && watchingId !== currentJobId) return;
     const cards = Array.from(document.querySelectorAll<HTMLElement>("#view-processing .prg-mini[data-clip-id]"))
       .map((element) => {
         const rect = element.getBoundingClientRect();
@@ -730,12 +736,12 @@ export default function StudioApp() {
         };
       })
       .filter((item) => item.clipId && item.rect.width > 0 && item.rect.height > 0);
-    scanRevealRef.current = cards.length ? { jobId: currentJob.id, cards } : null;
+    scanRevealRef.current = cards.length ? { jobId: currentJobId, cards } : null;
     let cancelled = false;
-    void hydrateSessionClips(currentJob.id).then(() => {
+    void hydrateSessionClips(currentJobId).then(() => {
       if (cancelled) return;
-      setSelectedSessionId(currentJob.id);
-      setCurrentSessionId(currentJob.id);
+      setSelectedSessionId(currentJobId);
+      setCurrentSessionId(currentJobId);
       setView("review");
     }).catch((error) => {
       if (cancelled) return;
@@ -747,11 +753,11 @@ export default function StudioApp() {
       );
     });
     return () => { cancelled = true; };
-  }, [currentJob?.status, currentJob?.id, view, selectedSessionId, currentSessionId, hydrateSessionClips, addLog]);
+  }, [currentJobStatus, currentJobId, view, selectedSessionId, currentSessionId, hydrateSessionClips, addLog]);
 
   useEffect(() => {
-    if (processingJob && terminal.has(processingJob.status)) setCancelRequested(false);
-  }, [processingJob?.status, processingJob?.id]);
+    if (processingId && processingStatus && terminal.has(processingStatus)) setCancelRequested(false);
+  }, [processingStatus, processingId]);
 
   useLayoutEffect(() => {
     const snapshot = scanRevealRef.current;
@@ -802,7 +808,7 @@ export default function StudioApp() {
 
   useEffect(() => {
     setCancelRequested(false);
-  }, [currentJob?.id]);
+  }, [currentJobId]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1203,8 +1209,8 @@ export default function StudioApp() {
   };
 
   const cancelScan = async () => {
-    const jobId = processingJob?.id ?? currentJob?.id;
-    if (!jobId || cancelRequested || terminal.has(processingJob?.status ?? "")) return;
+    const jobId = processingId ?? currentJobId;
+    if (!jobId || cancelRequested || terminal.has(processingStatus ?? "")) return;
     setCancelRequested(true);
     const ok = await cancelJobById(jobId);
     if (!ok) setCancelRequested(false);
@@ -1575,7 +1581,7 @@ export default function StudioApp() {
   return (
     <>
       <GlassDefs />
-      <AmbientGlow image={ambientImage} accent={settings.accent} theme={settings.theme || "dark"} view={settingsOpen ? "settings" : view} />
+      <AmbientGlow image={ambientImage} accent={settings.accent} theme={settings.theme || "dark"} />
       <WindowChrome />
       <PetLayer keepers={shellCountsNow.keepers} scanning={!!shellCountsNow.scan} focus={petsStayHome} hidden={view === "theater"} />
       <Celebration onOpenCrew={() => openSettings("crew")} />
@@ -1616,12 +1622,11 @@ export default function StudioApp() {
           )}
 
 
-          <div className={`view-panel ${view === "home" ? "active" : ""}`} id="view-home">
-            <HomeView
+          <ViewPanel id="view-home" active={view === "home"}>
+            <LiveHomeView
               displayName={displayName}
               onRename={saveDisplayName}
               sessions={sortedSessions}
-              scan={homeScan}
               queued={shellCountsNow.queued}
               live={recallLive}
               accentChosen={settings.accent !== null}
@@ -1632,15 +1637,15 @@ export default function StudioApp() {
               onView={goTo}
               onChecklist={runChecklistStep}
             />
-          </div>
+          </ViewPanel>
 
           <div className={`view-panel ${view === "live" ? "active" : ""}`} id="view-live">
             {view === "live" && <RecallLiveView onScanRecording={beginRecallSessionScan} sessions={sessions} />}
           </div>
 
-          <div className={`view-panel ${view === "sessions" ? "active" : ""}`} id="view-sessions">
+          <ViewPanel id="view-sessions" active={view === "sessions"}>
             <LibraryView sessions={sortedSessions} onOpen={(session) => { void openSession(session); }} onDelete={setDeleteTarget} onDeleteMany={setBulkDeleteTargets} onNew={openProject} />
-          </div>
+          </ViewPanel>
 
           <div className={`view-panel ${view === "memory" ? "active" : ""}`} id="view-memory">
             {view === "memory" && (
@@ -1668,8 +1673,8 @@ export default function StudioApp() {
             )}
           </div>
 
-          <div className={`view-panel ${view === "add-vod" ? "active" : ""}`} id="view-add-vod">
-            <NewScanView
+          <ViewPanel id="view-add-vod" active={view === "add-vod"}>
+            <LiveNewScanView
               importMode={importMode}
               onImportMode={setImportModeSafe}
               source={source}
@@ -1681,7 +1686,6 @@ export default function StudioApp() {
               processingMode={settings.processingMode}
               scansAhead={sessions.filter((session) => ["queued", "analyzing", "detecting", "assembling"].includes(session.status)).length}
               rates={scanRates}
-              queueWait={queueWaitSeconds(scanRates, jobs, sessions)}
               onLive={() => goTo("live")}
               onScanSettings={() => openSettings("scanning")}
               probeMeta={probeMeta}
@@ -1715,26 +1719,25 @@ export default function StudioApp() {
               onRetryBatchRow={(row) => void probeBatchUrl(row.id, row.url)}
               onStartBatch={beginBatchQueue}
             />
-          </div>
+          </ViewPanel>
 
-          <div className={`view-panel ${view === "processing" ? "active" : ""}`} id="view-processing">
-            <LiveScanView
-              job={processingJob}
-              session={sessions.find((session) => session.id === processingJob?.id)}
+          <ViewPanel id="view-processing" active={view === "processing"}>
+            <ProcessingScanView
+              pick={processingPick}
+              session={sessions.find((session) => session.id === processingId)}
               cancelRequested={cancelRequested}
               onCancel={cancelScan}
-              onRetry={() => retryScan(processingJob)}
-              onUseFile={() => void useDownloadedFile(sessions.find((session) => session.id === processingJob?.id)?.name)}
+              onRetryJob={retryScan}
+              onUseFile={() => void useDownloadedFile(sessions.find((session) => session.id === processingId)?.name)}
               onBack={() => setView("queue")}
               onReview={openDeck}
               rates={scanRates}
             />
-          </div>
+          </ViewPanel>
 
-          <div className={`view-panel ${view === "queue" ? "active" : ""}`} id="view-queue">
-            <ScansView
+          <ViewPanel id="view-queue" active={view === "queue"}>
+            <LiveScansView
               jobIds={batchJobIds}
-              jobs={jobs}
               sessions={sessions}
               onOpenSession={openSession}
               onOpenProcessing={(session) => {
@@ -1752,9 +1755,9 @@ export default function StudioApp() {
                 addLog("Scan queue cleared. Your sessions are still in Sessions.", "info");
               }}
             />
-          </div>
+          </ViewPanel>
 
-          <div className={`view-panel ${view === "review" ? "active" : ""}`} id="view-review">
+          <ViewPanel id="view-review" active={view === "review"}>
             {reviewScope === "index" ? (
               <ReviewIndex
                 sessions={sortedSessions}
@@ -1797,7 +1800,7 @@ export default function StudioApp() {
               onToggleMoreCandidates={toggleSecondLook}
             />
             )}
-          </div>
+          </ViewPanel>
 
           <div className={`view-panel ${view === "cutting" ? "active" : ""}`} id="view-cutting">
             {/* The Cutting Room: the OpenCut editor on the session's full VOD,
@@ -1864,8 +1867,9 @@ export default function StudioApp() {
             )}
           </div>
 
-          <div className={`view-panel ${view === "clips" ? "active" : ""}`} id="view-clips">
-            {view === "clips" && (
+          {/* Mounted on the first visit, then kept: 800 keepers take ~100ms to build,
+              and nothing on it plays, so it's safe behind other pages. */}
+          <ViewPanel id="view-clips" active={view === "clips"} lazy>
               <ExportView
                 items={keptClips}
                 selectedIds={selectedExportIds}
@@ -1881,10 +1885,9 @@ export default function StudioApp() {
                 onView={goTo}
                 onChangeFormat={() => openSettings("clips")}
               />
-            )}
-          </div>
+          </ViewPanel>
 
-          <div className={`view-panel ${view === "reel" ? "active" : ""}`} id="view-reel">
+          <ViewPanel id="view-reel" active={view === "reel"}>
             <ReelView
               sessions={sortedSessions}
               session={reelSession}
@@ -1901,16 +1904,16 @@ export default function StudioApp() {
               onOpenReview={() => { if (reelSession) openSession(reelSession); }}
               onView={goTo}
             />
-          </div>
+          </ViewPanel>
 
-          <div className={`view-panel ${view === "insights" ? "active" : ""}`} id="view-insights">
+          <ViewPanel id="view-insights" active={view === "insights"}>
             <InsightsView sessions={sessions} onStart={() => openProject("local")} onSettings={() => openSettings("you")} />
-          </div>
+          </ViewPanel>
         </main>
       </div>
 
-      {exportOperation && ["queued", "running"].includes(exportOperation.status) && (
-        <ExportProgressDock operation={exportOperation} onCancel={cancelExportOperation} />
+      {exportStatus && ["queued", "running"].includes(exportStatus) && (
+        <ExportProgressDock onCancel={cancelExportOperation} />
       )}
 
       <div id="project-delete-modal" className={`project-modal ${deleteTarget ? "open" : ""}`} onMouseDown={(event) => { if (event.target === event.currentTarget) closeDeleteModal(); }}>
@@ -1967,7 +1970,9 @@ function clipsClause(count: number, owner: "its" | "their"): string {
   return ` and all ${count} of ${owner} clips`;
 }
 
-function ExportProgressDock({ operation, onCancel }: { operation: ExportOperation; onCancel: () => void }) {
+function ExportProgressDock({ onCancel }: { onCancel: () => void }) {
+  const operation = useJobStore((state) => state.exportOperation);
+  if (!operation) return null;
   const percent = Math.round(operation.progress * 100);
   const compilingReel = operation.kind === "reel" && operation.phase === "compiling_reel";
   const activeRender = operation.phase === "rendering" || compilingReel;

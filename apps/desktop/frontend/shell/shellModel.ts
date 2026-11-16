@@ -33,6 +33,16 @@ function undecided(session: Session) {
   ).length;
 }
 
+/** The scan that is running now (Recall runs one at a time). */
+export function runningScanJob(jobs: Job[]): Job | undefined {
+  return jobs.find((job) => RUNNING.includes(job.status));
+}
+
+/** A running scan's progress, 0-100. */
+export function scanProgress(job: Pick<Job, "progress">): number {
+  return Math.max(0, Math.min(100, job.progress || 0));
+}
+
 export function shellCounts(sessions: Session[], jobs: Job[]): ShellCounts {
   let toReview = 0;
   let toExport = 0;
@@ -42,12 +52,12 @@ export function shellCounts(sessions: Session[], jobs: Job[]): ShellCounts {
     keepers += session.savedClipIds.length;
     toExport += session.savedClipIds.filter((id) => !session.exportedClipIds.includes(id)).length;
   }
-  const runningJob = jobs.find((job) => RUNNING.includes(job.status));
+  const runningJob = runningScanJob(jobs);
   const scan = runningJob
     ? {
         id: runningJob.id,
         title: sessions.find((session) => session.id === runningJob.id)?.name ?? "Your stream",
-        progress: Math.max(0, Math.min(100, runningJob.progress || 0)),
+        progress: scanProgress(runningJob),
       }
     : undefined;
   return {

@@ -130,7 +130,7 @@ def get_silero_vad_dir() -> str | None:
     Hugging Face when no path is supplied. A portable build must stay offline,
     so frozen runs always point at the build-required local asset. Returning
     the path even after a damaged install is intentional: a missing file then
-    fails into Recall's Whisper fallback instead of attempting a download.
+    fails the speech detection instead of attempting a download.
     """
     directory = os.path.join(get_speech_models_dir(), "asr", "silero-vad")
     managed = bool(os.environ.get("RECALL_SPEECH_SNAPSHOT", "")) and not os.environ.get("RECALL_MODELS_DIR", "").strip()

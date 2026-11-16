@@ -2,6 +2,7 @@
 # Copyright (C) 2026 Brady Balk
 import os
 import shutil
+import uuid
 import cv2
 
 from core.bundle_paths import get_data_dir
@@ -18,7 +19,12 @@ class StorageManager:
                  debug_ocr: bool = False):
                  
         self.base_dir = get_data_dir()
-        self.temp_dir = os.path.join(self.base_dir, "temp")
+        # A folder of this run's own under data/temp, so cleanup_temp removes
+        # only what this scan wrote. data/temp is shared: the caption editor,
+        # on-demand renders and other jobs keep files there while a scan runs,
+        # and purging the whole folder deleted them.
+        self.temp_root = os.path.join(self.base_dir, "temp")
+        self.temp_dir = os.path.join(self.temp_root, f"scan-{uuid.uuid4().hex[:12]}")
         self.cache_dir = os.path.join(self.base_dir, "cache")
         self.outputs_dir = os.path.join(self.base_dir, "exports") # keep exports naming for compatibility
         self.assets_dir = os.path.join(self.base_dir, "assets")
@@ -41,11 +47,10 @@ class StorageManager:
             os.makedirs(os.path.join(self.temp_dir, "frames"), exist_ok=True)
             
     def cleanup_temp(self):
-        """Purge the temp directory if deletion is enabled."""
+        """Remove this run's temp folder if deletion is enabled."""
         if self.delete_temp and os.path.exists(self.temp_dir):
             try:
                 shutil.rmtree(self.temp_dir)
-                os.makedirs(self.temp_dir, exist_ok=True)
             except Exception as e:
                 print(f"Warning: Failed to cleanup temp directory: {e}")
                 

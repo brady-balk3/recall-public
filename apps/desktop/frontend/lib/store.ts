@@ -315,7 +315,8 @@ export type ThemeMode = "light" | "dark";
  * VOD from gameplay motion/event evidence. Consumed by the export engine. */
 export type ExportLayout = "auto" | "vertical_split" | "gameplay_pip";
 
-export type ManualClipLayout = ExportLayout | "full_gameplay";
+/** "vtuber_overlay": the avatar in the facecam box, background cut out, over the game. */
+export type ManualClipLayout = ExportLayout | "full_gameplay" | "vtuber_overlay";
 export interface ManualClipOptions {
   start: number;
   end: number;
@@ -337,7 +338,7 @@ export interface ManualClipOptions {
 }
 
 export interface ManualFraming {
-  type: "vertical_split" | "gameplay_pip" | "full_gameplay";
+  type: "vertical_split" | "gameplay_pip" | "full_gameplay" | "vtuber_overlay" | "full_camera";
   facecam?: number[] | null;
   gameplay?: number[] | null;
   focus_x: number;
@@ -515,6 +516,10 @@ export interface Settings {
   performanceProfile: "background" | "balanced" | "max";
   exportLayout: ExportLayout;
   captionStyle: CaptionStyle;
+  /** Burn in and quote only the streamer's own voice, leaving out teammates
+   *  and other voices on stream. On unless turned off; the engine reads it at
+   *  scan time and at every caption render. */
+  captionStreamerOnly: boolean;
   exportPreset: ExportPreset;
   filenameTemplate: string;
   /** Target for Recall-owned clips, scan data, and required session data. */
@@ -544,6 +549,7 @@ const PERSISTED_SETTING_KEYS = [
   "performanceProfile",
   "exportLayout",
   "captionStyle",
+  "captionStreamerOnly",
   "recallStorageCapGb",
   "sourceRetentionDays",
   "theme",
@@ -1038,6 +1044,7 @@ export const useJobStore = create<JobStore>((set, get) => ({
     performanceProfile: "balanced",
     exportLayout: readStored<ExportLayout>("recall-export-layout", "auto"),
     captionStyle: readStoredJson<CaptionStyle>("recall-caption-style", DEFAULT_CAPTION_STYLE),
+    captionStreamerOnly: true,
     exportPreset: readStored<ExportPreset>("recall-export-preset", "none"),
     filenameTemplate: readStored("recall-filename-template", ""),
     recallStorageCapGb: 25,
@@ -1914,6 +1921,7 @@ export const useJobStore = create<JobStore>((set, get) => ({
             performanceProfile: settings.performanceProfile,
             exportLayout: settings.exportLayout,
             captionStyle: settings.captionStyle,
+            captionStreamerOnly: settings.captionStreamerOnly,
             vtuberMode: "off",
           },
         }),
@@ -1976,12 +1984,30 @@ export const useJobStore = create<JobStore>((set, get) => ({
 
   updateJob: (id, patch) =>
     set((state) => {
-      const updatedJobs = state.jobs.map((j) => (j.id === id ? { ...j, ...patch } : j));
+      const hasJob = state.jobs.some((j) => j.id === id);
+      const updatedJobs = hasJob ? state.jobs.map((j) => (j.id === id ? { ...j, ...patch } : j)) : state.jobs;
+      // A scan streams several patches a second (progress, telemetry, lanes,
+      // verdicts), and every one used to hand out a new sessions array, which
+      // redrew everything that lists sessions. The session only changes when
+      // its status or clips do. Its message is a mirror of the job's: while the
+      // job is mid-scan everything reads the job's own message first, so the
+      // session takes the latest one at its next real change instead of
+      // per event. A 200-event scan burst made 400 sessions arrays; now none
+      // (one per status band change and at the end).
+      let sessionChanged = false;
       const updatedSessions = state.sessions.map((s) => {
         if (s.id === id) {
           const updatedClips = patch.clips !== undefined ? patch.clips : s.clips;
           const updatedStatus = patch.status !== undefined ? patch.status : s.status;
           const completedNow = updatedStatus === "completed" && !terminalJobStatus(s.status);
+          const message = patch.message !== undefined ? patch.message : s.message;
+          const midScan = hasJob && !terminalJobStatus(updatedStatus);
+          if (
+            patch.clips === undefined
+            && updatedStatus === s.status
+            && (message === s.message || midScan)
+          ) return s;
+          sessionChanged = true;
           return {
             ...s,
             clips: updatedClips,
@@ -1991,7 +2017,9 @@ export const useJobStore = create<JobStore>((set, get) => ({
                 ? false
                 : s.clipsHydrated,
             status: updatedStatus,
-            message: patch.message !== undefined ? patch.message : s.message,
+            message: patch.message !== undefined
+              ? patch.message
+              : (hasJob ? updatedJobs.find((j) => j.id === id)?.message : undefined) ?? s.message,
             updatedAt: Date.now()
           };
         }
@@ -1999,7 +2027,7 @@ export const useJobStore = create<JobStore>((set, get) => ({
       });
       return {
         jobs: updatedJobs,
-        sessions: updatedSessions,
+        sessions: sessionChanged ? updatedSessions : state.sessions,
         currentJob:
           state.currentJob?.id === id
             ? { ...state.currentJob, ...patch }
@@ -2151,6 +2179,7 @@ async function enqueueScanJob(
           // the saved preference for the next scan and other batch rows.
           exportLayout: opts.vtuberMode === "confirmed" ? "auto" : settings.exportLayout,
           captionStyle: settings.captionStyle,
+          captionStreamerOnly: settings.captionStreamerOnly,
           // Identity is deliberately per scan and defaults off. Never infer
           // this from webcam geometry or a VOD title.
           vtuberMode: opts.vtuberMode === "confirmed" ? "confirmed" : "off",
@@ -2311,7 +2340,10 @@ function mergeEvents(jobId: string, rawEvents: any[]) {
     const clip = found.get(clipId);
     if (clip?.pending) found.set(clipId, { ...clip, captioned: true, title: title || clip.title });
   }
-  const foundClips = Array.from(found.values());
+  // Keep the lists' identity when this batch didn't touch them (most events are
+  // progress), so the scan page's memos over them hold.
+  const foundTouched = captioned.size > 0 || mapped.some((e) => e.eventType === "clip_found");
+  const foundClips = foundTouched || !job.foundClips ? Array.from(found.values()) : job.foundClips;
 
   let scanHealth = job.scanHealth;
   for (const e of mapped) {
@@ -2351,7 +2383,10 @@ function mergeEvents(jobId: string, rawEvents: any[]) {
     }
   }
 
-  const candidateList = Array.from(candidates.values()).sort((a, b) => a.start - b.start);
+  const candidatesTouched = mapped.some((e) => e.eventType === "candidates_ready" || e.eventType === "candidate_verdict");
+  const candidateList = candidatesTouched || !job.candidates
+    ? Array.from(candidates.values()).sort((a, b) => a.start - b.start)
+    : job.candidates;
   store.updateJob(jobId, {
     events, foundClips, liveTimeline, scanHealth,
     ...(liveLanes ? { liveLanes } : {}),

@@ -7,6 +7,11 @@
 .lib-gh b { font-size: 14px; }
 .lib-gh .t3 { font-size: 12.5px; }
 .lib-grid { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.lib-grid + .lib-grid { margin-top: 20px; }
+/* Stand-ins for cards not built yet (LazyFill): a card's poster (16:7) plus its body row. */
+.lib-ph { box-sizing: content-box; aspect-ratio: 16 / 7; padding-bottom: 46px; border-radius: var(--r-lg); background: rgba(127, 127, 127, .08); }
+.lib-rows.is-pending { padding: 6px; border-radius: 22px; background: rgba(127, 127, 127, .06); }
+.lib-rph { height: 114px; }
 .lib-none { display: flex; align-items: center; gap: 10px; padding: 40px 4px; }
 .lib-none svg { width: 18px; height: 18px; }
 .lib-empty { display: grid; gap: 14px; justify-items: start; padding: 48px 52px; border-radius: 28px; }

@@ -4,7 +4,8 @@
  * Is a Recall Live session running, how many moments has it marked, and what
  * is the Remember hotkey? One poll for the whole app (sidebar dot, Home card).
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { usePolling } from "./polling";
 import { getActiveRecallSession } from "./recallSessions";
 
 export interface RecallLiveState {
@@ -26,21 +27,21 @@ export function displayAccelerator(accelerator: string | null | undefined): stri
 export function useRecallLive(): RecallLiveState {
   const [state, setState] = useState<RecallLiveState>({ active: false, marks: 0, hotkey: null });
 
+  // Checked at once, then every 15s while the window is on screen: nothing
+  // but the sidebar dot and the Home card reads it, so a minimized window
+  // skips it and looks again as soon as it's back.
+  const check = useCallback((isCurrent: () => boolean) => getActiveRecallSession()
+    .then((session) => {
+      if (!isCurrent()) return;
+      const active = session?.status === "active";
+      const marks = active ? session?.events?.filter((event) => event.kind === "remember").length ?? 0 : 0;
+      setState((prev) => (prev.active === active && prev.marks === marks ? prev : { ...prev, active, marks }));
+    })
+    .catch(() => { if (isCurrent()) setState((prev) => (prev.active ? { ...prev, active: false, marks: 0 } : prev)); }), []);
+  usePolling(check, POLL_MS, { leading: true });
+
   useEffect(() => {
     let mounted = true;
-    const check = () => {
-      void getActiveRecallSession()
-        .then((session) => {
-          if (!mounted) return;
-          const active = session?.status === "active";
-          const marks = active ? session?.events?.filter((event) => event.kind === "remember").length ?? 0 : 0;
-          setState((prev) => (prev.active === active && prev.marks === marks ? prev : { ...prev, active, marks }));
-        })
-        .catch(() => { if (mounted) setState((prev) => (prev.active ? { ...prev, active: false, marks: 0 } : prev)); });
-    };
-    check();
-    const timer = window.setInterval(check, POLL_MS);
-
     void window.electronAPI?.getRememberHotkey?.()
       .then((hotkey) => {
         if (mounted) setState((prev) => ({ ...prev, hotkey: hotkey?.registered ? displayAccelerator(hotkey.accelerator) : null }));
@@ -52,7 +53,6 @@ export function useRecallLive(): RecallLiveState {
 
     return () => {
       mounted = false;
-      window.clearInterval(timer);
       if (typeof unsubscribe === "function") unsubscribe();
     };
   }, []);

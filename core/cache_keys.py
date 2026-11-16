@@ -3,7 +3,7 @@
 """Shared cache-key derivation (pipeline + API service must agree exactly).
 
 The extracted WAV and the full-VOD transcript depend ONLY on the source file's
-audio and (for transcripts) the Whisper model — never on vision/OCR/facecam
+audio and (for transcripts) the ASR's cache label — never on vision/OCR/facecam
 settings. Keying them on the content-only key means a sensitivity-slider
 change doesn't re-extract or re-transcribe, and the API service can rebuild
 the same key from the video path alone (it doesn't know the scan's settings).
@@ -12,7 +12,9 @@ the same key from the video path alone (it doesn't know the scan's settings).
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import re
 
 
 def audio_cache_key(video_path: str) -> str:
@@ -73,3 +75,66 @@ def region_set_hash(regions) -> str:
         for start, end in sorted((float(s), float(e)) for s, e in (regions or []))
     )
     return hashlib.md5(f"regions-v1|{parts}".encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
+
+
+# --------------------------------------------------------------- source index
+#
+# Cache file names start with an opaque key, so the storage janitor cannot tell
+# from a name which VOD a file belongs to. The settings-independent audio key
+# it can recompute from any source file still on disk (path + size + mtime);
+# the settings-dependent video hashes and the visual judge's verdict keys it
+# cannot, so each scan records them here, in one small index per source named
+# after that source's audio key. The janitor keeps whatever an index of a
+# source still on disk lists, and treats everything it cannot attribute as
+# belonging to no source. An index is advisory: a missing or broken one only
+# makes its files look orphaned, never keeps another source's files.
+
+CACHE_INDEX_SUFFIX = "_cache_index_v1.json"
+
+# Video hashes are md5 (32 hex), verdict keys sha256 (64 hex). Anything else
+# in an index is ignored: the janitor builds paths to delete from these.
+_INDEX_KEY = re.compile(r"[0-9a-f]{32}|[0-9a-f]{64}")
+
+
+def cache_index_path(cache_dir: str, audio_key: str) -> str:
+    return os.path.join(cache_dir, f"{audio_key}{CACHE_INDEX_SUFFIX}")
+
+
+def read_cache_index(cache_dir: str, audio_key: str) -> dict:
+    """``{"video_hashes": set, "visual_verdicts": set}``; empty on any problem."""
+    index = {"video_hashes": set(), "visual_verdicts": set()}
+    try:
+        with open(cache_index_path(cache_dir, audio_key), "r", encoding="utf-8") as handle:
+            stored = json.load(handle)
+    except (OSError, ValueError):
+        return index
+    if not isinstance(stored, dict):
+        return index
+    for field in index:
+        values = stored.get(field)
+        if isinstance(values, list):
+            index[field].update(
+                value for value in values
+                if isinstance(value, str) and _INDEX_KEY.fullmatch(value)
+            )
+    return index
+
+
+def record_cache_index(cache_dir: str, audio_key: str, *, video_hashes=(),
+                       visual_verdicts=()) -> None:
+    """Add keys to a source's index (atomic rewrite). Raises OSError; callers
+    treat a failure as best-effort, since it only costs the files' protection."""
+    index = read_cache_index(cache_dir, audio_key)
+    added = False
+    for field, values in (("video_hashes", video_hashes), ("visual_verdicts", visual_verdicts)):
+        for value in values:
+            if isinstance(value, str) and _INDEX_KEY.fullmatch(value) and value not in index[field]:
+                index[field].add(value)
+                added = True
+    if not added:
+        return
+    path = cache_index_path(cache_dir, audio_key)
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        json.dump({field: sorted(values) for field, values in index.items()}, handle)
+    os.replace(tmp_path, path)

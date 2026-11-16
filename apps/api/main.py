@@ -122,14 +122,23 @@ app = FastAPI(
 # open (a page can fetch http://127.0.0.1:8000/...). CORS headers only gate
 # whether that page can *read* the response — a "simple" cross-origin POST still
 # executes server-side, so CORS alone can't protect destructive endpoints
-# (/system/wipe, /clips/copy-to-folder, /jobs/run, ...). The Origin guard below
+# (/system/wipe, /clips/export-operations, /jobs/run, ...). The Origin guard below
 # rejects the request itself before it runs.
 #
 # Legitimate callers: the packaged renderer loads over file:// (Origin "null"),
 # the dev renderer is served by Vite on localhost, and non-browser clients
 # (curl, the Electron main) send no Origin at all. Everything else is a real
 # website and is refused.
+#
+# "null" is also what a sandboxed iframe on any website sends, so it is only
+# accepted when Electron launched this API with a token, which the packaged
+# renderer always has and a website cannot (the token check still runs).
+# Every caller addresses the API as 127.0.0.1 or localhost; a Host naming
+# anything else is a DNS-rebinding page reading the API as "same origin",
+# with no Origin header at all. The server binds IPv4 127.0.0.1 only, so
+# [::1] can never reach it and is not allowed either.
 _LOOPBACK_ORIGIN_RE = re.compile(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$")
+_LOOPBACK_HOST_RE = re.compile(r"^(localhost|127\.0\.0\.1)(:\d{1,5})?$", re.IGNORECASE)
 _API_TOKEN = os.environ.get("RECALL_API_TOKEN", "").strip()
 
 
@@ -137,8 +146,14 @@ def _origin_allowed(origin: Optional[str]) -> bool:
     if origin is None:
         return True  # non-browser client; not a cross-site browser request
     if origin == "null":
-        return True  # packaged file:// renderer
+        return bool(_API_TOKEN)  # packaged file:// renderer, which has a token
     return bool(_LOOPBACK_ORIGIN_RE.match(origin))
+
+
+def _host_allowed(host: Optional[str]) -> bool:
+    # A missing Host is refused too: every client found (Electron, the
+    # renderer, scripts/run_overnight_batch.py, curl) sends one.
+    return bool(host) and bool(_LOOPBACK_HOST_RE.fullmatch(host))
 
 
 def _api_token_allowed(request: Request) -> bool:
@@ -157,6 +172,8 @@ def _api_token_allowed(request: Request) -> bool:
 
 @app.middleware("http")
 async def guard_cross_origin(request: Request, call_next):
+    if not _host_allowed(request.headers.get("host")):
+        return JSONResponse(status_code=403, content={"detail": "Host not allowed"})
     if not _origin_allowed(request.headers.get("origin")):
         return JSONResponse(status_code=403, content={"detail": "Cross-origin request blocked"})
     if not _api_token_allowed(request):
@@ -390,8 +407,8 @@ class ManualClipRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_times(self):
-        if self.layout not in {"auto", "vertical_split", "gameplay_pip", "full_gameplay"}:
-            raise ValueError("layout must be auto, vertical_split, gameplay_pip, or full_gameplay.")
+        if self.layout not in {"auto", "vertical_split", "gameplay_pip", "full_gameplay", "vtuber_overlay"}:
+            raise ValueError("layout must be auto, vertical_split, gameplay_pip, full_gameplay, or vtuber_overlay.")
         if not math.isfinite(self.focus_x) or not 0.0 <= self.focus_x <= 1.0:
             raise ValueError("focus_x must be between 0 and 1.")
         if self.facecam_override is not None:
@@ -1614,22 +1631,10 @@ async def stream_job_events(job_id: str, request: Request):
     )
 
 
-@app.get("/exports")
-def list_exports():
-    return clip_service.list_exports()
-
 @app.post("/clips/delete-batch")
 def delete_clips_batch(request: DeleteClipsRequest, background_tasks: BackgroundTasks):
     result = clip_service.delete_batch(request.clip_ids)
     background_tasks.add_task(_maybe_train_ranker_background)
-    return result
-
-@app.post("/clips/copy-to-folder")
-def copy_clips_to_folder(request: CopyClipsRequest):
-    result = clip_service.copy_to_folder(
-        request.clip_ids, request.dest_folder,
-        preset=request.preset, filename_template=request.filename_template,
-    )
     return result
 
 
@@ -1662,16 +1667,6 @@ def get_clip_export(operation_id: str):
 @app.post("/clips/export-operations/{operation_id}/cancel")
 def cancel_clip_export(operation_id: str):
     return export_operation_service.cancel(operation_id)
-
-@app.post("/clips/compile-reel")
-def compile_reel(request: CompileReelRequest):
-    """Concatenate kept clips into one highlight reel (plan 22 §3.2)."""
-    result = clip_service.compile_reel(
-        request.clip_ids, request.dest_folder, filename=request.filename,
-    )
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-    return result
 
 @app.post("/clips/{clip_id}/label")
 def label_clip(clip_id: str, request: LabelClipRequest, background_tasks: BackgroundTasks):
@@ -1828,8 +1823,30 @@ def resolve_manual_clip_framing(job_id: str, request: ManualClipRequest):
         float(resolved.get("focus_x", 0.5)), resolved.get("facecam_subject_top"),
         bool(resolved.get("camera_cover")),
     )
-    resolved["layers"] = plan_layers(plan)
+    layers = plan_layers(plan)
+    overlay = resolved.get("vtuber_overlay") if resolved.get("type") == "vtuber_overlay" else None
+    if overlay and overlay.get("mask_path"):
+        # The cutout is an alpha mask the editor can't composite itself: the
+        # avatar layer is drawn by the Cutting Room's preview from the mask,
+        # placed where the render puts it (composition.py's VTuber filter).
+        top = float(overlay.get("top", 0.0)) * 1920.0
+        for layer in layers:
+            if layer.get("role") == "facecam":
+                layer["role"] = "avatar"
+                layer["target"] = [layer["target"][0], top, layer["target"][2], layer["target"][3]]
+        resolved["cutout"] = {
+            "mask": clip_service.serve_cutout_mask(job_id, overlay["mask_path"]),
+            "lower_fade": float(overlay.get("lower_fade", 0.0)),
+        }
+        resolved = {k: v for k, v in resolved.items() if k != "vtuber_overlay"}
+    resolved["layers"] = layers
     return resolved
+
+
+@app.get("/jobs/{job_id}/cutout-mask/{name}")
+def cutout_mask(job_id: str, name: str):
+    """A VTuber cutout mask the framing endpoint handed out (the Cutting Room preview)."""
+    return FileResponse(clip_service.cutout_mask_path(job_id, name), media_type="image/png")
 
 class CaptionWindowRequest(BaseModel):
     start: float
@@ -1857,12 +1874,6 @@ def preview_manual_clip(job_id: str, request: ManualClipRequest):
 def ranker_status():
     """Learned-ranker state: label count, threshold, which model is active."""
     return learning_service.status()
-
-
-@app.post("/ranker/train")
-def ranker_train():
-    """Fine-tune the per-install ranker on captured keep/reject labels."""
-    return learning_service.train()
 
 
 @app.post("/ranker/reset")

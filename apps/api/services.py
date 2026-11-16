@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import threading
 import time
 import uuid
@@ -56,6 +57,61 @@ REEL_FADE_IN_SECONDS = 0.45
 # fanning a session's rebuild out into two competing FFmpeg queues.
 _REBUILD_LOCK = threading.Lock()
 _ACTIVE_REBUILDS: Dict[str, Dict[str, Any]] = {}
+
+# Streamer-voice maps built after the fact (ClipService._build_streamer_voice_
+# later): the audio keys tried this run, and one build at a time.
+_VOICE_BUILD_LOCK = threading.Lock()
+_VOICE_BUILD_SLOT = threading.Semaphore(1)
+_VOICE_BUILDS_TRIED: set = set()
+
+
+def _build_streamer_voice_from_cache(data_root: str, audio_key: str, streamer: Optional[str]) -> None:
+    """The scan's streamer-voice step, run later from a cached analysis WAV.
+
+    Same speech regions (the cached ones, else the VAD), same build, same
+    cache file and the same profile update as the scan. Never raises.
+    """
+    from core import signal_cache
+    from engines.caption import voice_profile
+    from engines.caption.streamer_voice import build_streamer_voice, cache_name
+    from engines.caption.vod_transcribe import (
+        SPEECH_REGIONS_CACHE_VERSION,
+        detect_speech_regions,
+        speech_regions_cache_entry,
+        speech_regions_from_cache,
+    )
+
+    with _VOICE_BUILD_SLOT:
+        try:
+            if sys.platform == "win32":
+                import ctypes
+
+                ctypes.windll.kernel32.SetThreadPriority(ctypes.windll.kernel32.GetCurrentThread(), -2)
+        except Exception:  # noqa: BLE001 - priority is a courtesy
+            pass
+        try:
+            cache_dir = os.path.join(data_root, "cache")
+            wav = os.path.join(cache_dir, f"{audio_key}_audio.wav")
+            regions_path = os.path.join(
+                cache_dir,
+                f"{audio_key}_speech_regions_v{SPEECH_REGIONS_CACHE_VERSION}{signal_cache.CACHE_EXT}",
+            )
+            regions = speech_regions_from_cache(signal_cache.load(regions_path))
+            if regions is None:
+                regions = detect_speech_regions(wav)
+                signal_cache.save(regions_path, speech_regions_cache_entry(regions))
+            profile = voice_profile.load_profile(data_root, streamer) if streamer else None
+            voice = build_streamer_voice(wav, regions, profile=profile)
+            if voice is None:
+                logger.info("Streamer voice map for %s could not be built", audio_key)
+                return
+            signal_cache.save(
+                os.path.join(cache_dir, cache_name(audio_key, signal_cache.CACHE_EXT)), voice.to_cache())
+            if streamer:
+                voice_profile.update_profile(data_root, streamer, audio_key, voice)
+            logger.info("Streamer voice map built for %s: %s", audio_key, voice.summary())
+        except Exception:  # noqa: BLE001 - captions just stay unfiltered
+            logger.warning("Streamer voice map for %s failed", audio_key, exc_info=True)
 
 
 class _OperationProgressReporter:
@@ -114,10 +170,6 @@ class LearningService:
     def status(self) -> Dict[str, Any]:
         from core import ranker_service
         return ranker_service.ranker_status(self.db)
-
-    def train(self) -> Dict[str, Any]:
-        from core import ranker_service
-        return ranker_service.train_user_ranker(self.db)
 
     def reset(self) -> Dict[str, Any]:
         from core import ranker_service
@@ -394,6 +446,20 @@ class JobService:
             # delete fails unless the event log goes first.
             cursor.execute("DELETE FROM job_events WHERE job_id = ?", (job_id,))
             cursor.execute("DELETE FROM reaction_timelines WHERE job_id = ?", (job_id,))
+            # clip_labels and clip_boundary_edits rows for these clips stay on
+            # purpose: they are training data. A label carries its own feature
+            # snapshot, so the ranker still learns from it with the clip gone,
+            # and boundary edits feed boundary supervision. "Wipe all data" and
+            # "Reset personalization" are the ways to clear labels.
+            #
+            # A caption correction is different: only its own clip's render
+            # reads it, so with the clip gone it is the creator's text kept
+            # for nothing. It goes with the session.
+            cursor.execute(
+                "DELETE FROM clip_caption_edits WHERE job_id = ? "
+                "OR clip_id IN (SELECT id FROM clips WHERE job_id = ?)",
+                (job_id, job_id),
+            )
             cursor.execute("DELETE FROM clips WHERE job_id = ?", (job_id,))
             cursor.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
             cursor.execute(
@@ -877,12 +943,6 @@ class ClipService:
         ).start()
         return dict(state)
 
-    def list_exports(self) -> List[Dict[str, Any]]:
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM exports ORDER BY created_at DESC")
-            return [dict(row) for row in cursor.fetchall()]
-
     def delete_batch(self, clip_ids: List[str]) -> Dict[str, int]:
         if not clip_ids:
             return {"deleted": 0}
@@ -900,6 +960,9 @@ class ClipService:
                     (row["id"], row["features"], 0, "deleted"),
                 )
             cursor.execute(f"DELETE FROM exports WHERE clip_id IN ({placeholders})", clip_ids)  # nosec B608
+            # Labels and boundary edits stay as training data (see JobService.delete);
+            # a caption correction is read only by its own clip's render.
+            cursor.execute(f"DELETE FROM clip_caption_edits WHERE clip_id IN ({placeholders})", clip_ids)  # nosec B608
             cursor.execute(f"DELETE FROM clips WHERE id IN ({placeholders})", clip_ids)  # nosec B608
         for row in rows:
             path = row["export_path"]
@@ -1093,7 +1156,8 @@ class ClipService:
         with source_in_use(self.db, clip_row["job_id"]):
             video_path = self._local_source_video(job_row)
             layout = self._layout_from_meta(clip_row["id"], clip_row["export_path"])
-            ass_path = self._regenerate_ass_if_possible(video_path, clip_row["id"], start, end)
+            ass_path = self._regenerate_ass_if_possible(video_path, clip_row["id"], start, end,
+                                                        job_id=clip_row["job_id"])
             if ass_path is None and self._caption_style(None).enabled:
                 logger.warning("Rendering clip %s without captions: no words were found for it",
                                clip_row["id"])
@@ -1127,7 +1191,7 @@ class ClipService:
         Clips land in the library with a cheap low-res preview only (see
         pipeline/orchestrator/run_pipeline.py, ``export_clips(..., preview=True)``)
         -- the full-quality ffmpeg render now happens lazily, the first time a
-        clip is actually exported (copy-to-folder, compile-reel) or edited,
+        clip is actually exported (copy_to_folder, compile_reel) or edited,
         rather than for every candidate clip during the VOD scan. Returns the
         export_path, or None if rendering failed.
         """
@@ -2981,7 +3045,9 @@ class ClipService:
         if resolved.get("type") == "vtuber_overlay":
             composition = "VTuber overlay"
             reason = (
-                "VTuber mode was confirmed for this VOD, so Recall uses the "
+                "Your avatar, cut out from the box you drew and laid over the game."
+                if evidence_source == "manual"
+                else "VTuber mode was confirmed for this VOD, so Recall uses the "
                 "saved avatar cutout."
             )
         elif resolved.get("type") == "full_camera":
@@ -3057,7 +3123,7 @@ class ClipService:
             ) = self._legacy_manual_framing(job_id, start, end)
 
         requested = requested_layout if requested_layout in {
-            "auto", "vertical_split", "gameplay_pip", "full_gameplay",
+            "auto", "vertical_split", "gameplay_pip", "full_gameplay", "vtuber_overlay",
         } else "auto"
         manual_box = (
             [float(v) for v in facecam_override]
@@ -3071,7 +3137,18 @@ class ClipService:
             if requested == "auto" and resolved_auto not in {"vertical_split", "gameplay_pip"}:
                 # Drawing a facecam is a request for a facecam composition.
                 resolved_auto = "vertical_split"
-        layout_type = resolved_auto if requested == "auto" else requested
+        vtuber_model = (model or {}).get("vtuber") if model else None
+        confirmed_vtuber = isinstance(vtuber_model, dict) and vtuber_model.get("status") == "confirmed"
+        # The VTuber cutout: chosen in the Cutting Room, or a confirmed VTuber
+        # scan whose creator drew their own avatar box (the scan's mask was cut
+        # for a different box).
+        cutout = requested == "vtuber_overlay" or (requested == "auto" and confirmed_vtuber and bool(manual_box))
+        if requested == "vtuber_overlay":
+            # Composed below from the cutout; until then it's a stacked cam.
+            requested_for_layout = "vertical_split"
+        else:
+            requested_for_layout = requested
+        layout_type = resolved_auto if requested_for_layout == "auto" else requested_for_layout
         if layout_type == "full_gameplay":
             facecam_box = None
             facecam_subject_top = None
@@ -3092,7 +3169,7 @@ class ClipService:
             camera_focus_x=camera_focus_x,
             facecam_subject_top=facecam_subject_top,
         )
-        if requested == "auto" and model and not manual_box:
+        if requested in {"auto", "vtuber_overlay"} and model and not manual_box:
             from engines.vision import vtuber as vtuber_mod
 
             overlay = vtuber_mod.overlay_for_facecam(
@@ -3100,12 +3177,104 @@ class ClipService:
             )
             if overlay is not None:
                 resolved = vtuber_mod.apply_overlay(resolved, overlay)
+                cutout = False
+        if cutout:
+            from engines.vision import vtuber as vtuber_mod
+
+            if not facecam_box:
+                resolved["cutout_status"] = "no_box"
+            else:
+                overlay = self._cutout_overlay(job_id, job_row, facecam_box)
+                if overlay is not None:
+                    resolved = vtuber_mod.apply_overlay(resolved, overlay)
+                    evidence_source = "manual" if manual_box else evidence_source
+                else:
+                    resolved["cutout_status"] = "mask_failed"
+        if resolved.get("type") == "vtuber_overlay":
+            # apply_overlay keeps the game window off the source avatar (else
+            # it shows twice); the requested focus must not undo that.
+            focus_x = float(resolved.get("focus_x", focus_x))
         return self._describe_manual_layout(
             resolved,
             requested=requested,
             evidence_source=evidence_source,
             focus_x=focus_x,
         )
+
+    # Cutout masks made in the Cutting Room, keyed by job and box. Building one
+    # reads three frames and runs GrabCut (about a second); the PNG is kept.
+    _cutout_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+
+    def _cutout_overlay(self, job_id: str, job_row: Any, box: List[float]) -> Optional[Dict[str, Any]]:
+        """A VTuber cutout for the avatar inside ``box``, built once and cached.
+
+        The creator chose the VTuber layout (or drew their avatar on a
+        confirmed VTuber scan), which is the explicit confirmation the cutout
+        needs. The mask is cut from the box exactly as drawn, at three moments
+        across the stream, so a changing game background drops out.
+        """
+        from engines.vision import avatar_matting
+        from engines.vision import vtuber as vtuber_mod
+
+        safe = [round(min(1.0, max(0.0, float(v))), 4) for v in box[:4]]
+        # The anime matting model when it's installed (per-frame in renders),
+        # else the GrabCut still mask. The method is in the key: a mask made
+        # one way is never reused for the other.
+        matted = avatar_matting.available()
+        key = f"{job_id}|{'isnet' if matted else 'grabcut'}|{','.join(str(v) for v in safe)}"
+        if key in self._cutout_cache:
+            return self._cutout_cache[key]
+        name = "cutout_" + uuid.uuid5(uuid.NAMESPACE_URL, key).hex[:16] + ".png"
+        mask_path = os.path.abspath(os.path.join(self.data_root, "cutouts", job_id, name))
+        overlay: Optional[Dict[str, Any]] = None
+        try:
+            if not os.path.isfile(mask_path):
+                video_path = self._local_source_video(job_row)
+                duration = float(job_row["duration"] or 0.0)
+                stamps = [duration * f for f in (0.25, 0.5, 0.75)] if duration > 1 else [1.0, 30.0, 60.0]
+                made = (
+                    avatar_matting.still_mask(video_path, safe, stamps, mask_path)
+                    if matted
+                    else vtuber_mod._prepare_mask(video_path, safe, stamps, mask_path)
+                )
+                if not made:
+                    mask_path = ""
+            if mask_path:
+                overlay = {
+                    "plate": safe,
+                    "source_crop": safe,
+                    "mask_path": mask_path,
+                    "width": vtuber_mod.OVERLAY_WIDTH,
+                    "top": vtuber_mod.OVERLAY_TOP,
+                    "lower_fade": vtuber_mod.OVERLAY_LOWER_FADE,
+                    "verification": "creator_cutting_room",
+                    # Renders matte every frame; the still plate is the preview's.
+                    "per_frame": matted,
+                }
+        except HTTPException:
+            overlay = None  # the source isn't on disk; nothing to cut from
+        except Exception:
+            logger.exception("Cutout mask failed for %s", job_id)
+            overlay = None
+        self._cutout_cache[key] = overlay
+        return overlay
+
+    # Masks the framing endpoint has handed out, so the preview can fetch them
+    # by name without ever naming a path on disk.
+    _served_masks: Dict[tuple, str] = {}
+
+    def serve_cutout_mask(self, job_id: str, mask_path: str) -> str:
+        """Register a resolved layout's mask for the preview; returns its name."""
+        name = os.path.basename(mask_path)
+        self._served_masks[(job_id, name)] = os.path.abspath(mask_path)
+        return name
+
+    def cutout_mask_path(self, job_id: str, name: str) -> str:
+        """A mask the framing endpoint handed out for ``job_id``."""
+        path = self._served_masks.get((job_id, name))
+        if not path or not os.path.isfile(path):
+            raise HTTPException(status_code=404, detail="No such mask")
+        return path
 
     def _facecam_presence_probe(
         self,
@@ -3181,6 +3350,7 @@ class ClipService:
             video_path, preview_id, start, end,
             enabled_override=captions_enabled,
             prefer_alignment=True,
+            job_id=job_id,
         )
         preview_dir = os.path.join(self.data_root, "temp", "vod-editor-previews")
         os.makedirs(preview_dir, exist_ok=True)
@@ -3285,6 +3455,7 @@ class ClipService:
             # sometimes silent where speech was missed, but silent beats
             # confidently wrong on a clip about to be posted.
             prefer_alignment=is_library_clip,
+            job_id=job_id,
         )
         try:
             # peak_timestamp=center makes the poster land at the clip midpoint.
@@ -3403,6 +3574,83 @@ class ClipService:
         except OSError:
             return None
 
+    # -- streamer-only captions (engines.caption.streamer_voice) -------------
+
+    def _streamer_only_captions(self) -> bool:
+        """Settings > "Only caption my voice". On unless turned off."""
+        try:
+            return self.db.get_setting("captionStreamerOnly", True) is not False
+        except Exception:  # noqa: BLE001 - an unreadable setting keeps the default
+            return True
+
+    def _streamer_voice(self, video_path: str, job_id: Optional[str] = None):
+        """The VOD's streamer-voice map, or None (every word kept).
+
+        None when the setting is off, or no map was built for this audio --
+        a scan made with the setting off, or before it existed. That case
+        starts a background build (_build_streamer_voice_later) when the
+        scan's analysis WAV is still cached, and THIS caption stays
+        unfiltered: building takes 75-140 s of one core per VOD-hour, too long
+        to hold a render or an editor request for.
+        """
+        if not self._streamer_only_captions():
+            return None
+        audio_key = self._caption_audio_cache_key(video_path) if video_path else None
+        if not audio_key:
+            return None
+        from core import signal_cache
+        from engines.caption.streamer_voice import StreamerVoice, cache_name
+
+        path = os.path.join(self.data_root, "cache", cache_name(audio_key, signal_cache.CACHE_EXT))
+        memo = self.__dict__.setdefault("_streamer_voices", {})
+        try:
+            stamp = os.stat(path).st_mtime_ns
+        except OSError:
+            stamp = None
+        if stamp is not None:
+            hit = memo.get(path)
+            if hit and hit[0] == stamp:
+                return hit[1]
+            voice = StreamerVoice.from_cache(signal_cache.load(path))
+            memo[path] = (stamp, voice)
+            while len(memo) > 8:
+                memo.pop(next(iter(memo)))
+            if voice is not None:
+                return voice
+        self._build_streamer_voice_later(audio_key, job_id)
+        return None
+
+    def _build_streamer_voice_later(self, audio_key: str, job_id: Optional[str]) -> None:
+        """Build a missing map in the background from the cached analysis WAV.
+
+        Only from the WAV the scan left in the cache: re-extracting it means
+        reading the whole source (~1 min and 115 MB per VOD-hour) behind the
+        creator's back. Without it the map comes with the VOD's next scan.
+        One build at a time, one core, lowest thread priority; each audio key
+        is tried once per run of the app.
+        """
+        wav = os.path.join(self.data_root, "cache", f"{audio_key}_audio.wav")
+        if not os.path.isfile(wav):
+            return
+        with _VOICE_BUILD_LOCK:
+            if audio_key in _VOICE_BUILDS_TRIED:
+                return
+            _VOICE_BUILDS_TRIED.add(audio_key)
+        streamer = None
+        if job_id:
+            try:
+                with self.db.get_connection() as conn:
+                    row = conn.cursor().execute(
+                        "SELECT streamer FROM jobs WHERE id = ?", (job_id,)).fetchone()
+                streamer = row["streamer"] if row else None
+            except Exception:  # noqa: BLE001 - no profile, per-VOD only
+                streamer = None
+        data_root = self.data_root
+        threading.Thread(
+            target=_build_streamer_voice_from_cache, args=(data_root, audio_key, streamer),
+            name=f"recall-streamer-voice-{audio_key[:8]}", daemon=True,
+        ).start()
+
     # -- caption text: read what is burned in, correct it -------------------
 
     def get_caption(self, clip_id: str, transcribe: bool = False) -> Dict[str, Any]:
@@ -3497,10 +3745,16 @@ class ClipService:
         # one (so a second correction refines the first rather than reverting
         # to the machine), otherwise the decode.
         existing = self.db.get_caption_edit(clip_id)
-        fresh = (existing["words"] if existing
-                 and abs(float(existing["clip_start"]) - start) <= self.CAPTION_EDIT_WINDOW_TOLERANCE
-                 and abs(float(existing["clip_end"]) - end) <= self.CAPTION_EDIT_WINDOW_TOLERANCE
-                 else self._machine_caption_words(row, start, end))
+        has_edit = bool(existing
+                        and abs(float(existing["clip_start"]) - start) <= self.CAPTION_EDIT_WINDOW_TOLERANCE
+                        and abs(float(existing["clip_end"]) - end) <= self.CAPTION_EDIT_WINDOW_TOLERANCE)
+        fresh = existing["words"] if has_edit else self._machine_caption_words(row, start, end)
+        on_screen = fresh
+        if not fresh and not has_edit:
+            # Every decoded word was someone else's, so nothing is on screen.
+            # The creator typing the line in is how a missed one comes back:
+            # time it on the decode's own words. Their text, never the decode's.
+            fresh = self._machine_caption_words(row, start, end, unfiltered=True)
         # (unconditional: a correction cannot be timed without the decode)
         if not fresh:
             raise HTTPException(
@@ -3512,7 +3766,7 @@ class ClipService:
         if not words:
             raise HTTPException(status_code=422, detail="Caption text could not be timed.")
 
-        machine_text = (existing.get("machine_text") if existing else "") or words_to_text(fresh)
+        machine_text = (existing.get("machine_text") if existing else "") or words_to_text(on_screen)
         self.db.record_caption_edit(
             clip_id, row["job_id"], start, end, words, machine_text=machine_text,
         )
@@ -3523,9 +3777,17 @@ class ClipService:
             "needs_render": True,
         }
 
-    def _machine_caption_words(self, clip_row, start: float, end: float) -> List[Dict]:
-        """The per-clip ASR's timed words for a clip -- the decode that renders."""
-        from engines.caption.whisper_asr import transcribe_clip_window
+    def _machine_caption_words(self, clip_row, start: float, end: float,
+                               unfiltered: bool = False) -> List[Dict]:
+        """The per-clip ASR's timed words for a clip -- the decode that renders.
+
+        Only the streamer's words (the VOD's streamer-voice map, when the
+        setting is on), as every render burns them. ``unfiltered`` returns
+        every decoded word: timings for a correction typed over a clip whose
+        words were all someone else's, never text to show.
+        """
+        from engines.caption.asr import transcribe_clip_window
+        from engines.caption.streamer_voice import filter_transcript
 
         with self.db.get_connection() as conn:
             job_row = conn.cursor().execute(
@@ -3543,6 +3805,9 @@ class ClipService:
                 video_path, start, end,
                 os.path.join(temp_dir, f"caption_edit_{clip_row['id']}.wav"),
             )
+            if not unfiltered:
+                transcript = filter_transcript(
+                    transcript, self._streamer_voice(video_path, clip_row["job_id"]), start)
         words: List[Dict] = []
         for segment in transcript.get("segments", []) or []:
             words.extend(segment.get("words") or [])
@@ -3555,15 +3820,21 @@ class ClipService:
     _WINDOW_WORDS_KEEP = 32
 
     def window_caption_words(self, job_id: str, start: float, end: float,
-                             decode: bool = False) -> Dict[str, Any]:
+                             decode: bool = False, unfiltered: bool = False) -> Dict[str, Any]:
         """The words a clip of [start, end] would burn in, clip-relative.
 
         Same order as a render: the scan's own transcript first; a short-window
         decode only when the scan has no words there, and only when asked
         (``decode``), because it loads the ASR model. ``source`` says which:
         "scan", "decode", or "none" (nothing read yet, or nothing heard).
+
+        Only the streamer's words, as a render burns them. When the scan heard
+        words here and every one was someone else's, the answer is "scan"
+        with no words, not a decode: a decode would be filtered the same way.
+        ``unfiltered`` skips the filter (timings for a typed correction).
         """
-        from engines.caption.whisper_asr import slice_transcript_words, transcribe_clip_window
+        from engines.caption.asr import slice_transcript_words, transcribe_clip_window
+        from engines.caption.streamer_voice import filter_words, window_transcript
 
         if not (math.isfinite(start) and math.isfinite(end)) or end <= start or end - start > 180:
             raise HTTPException(status_code=422, detail="Caption windows must be 0-3 min.")
@@ -3576,16 +3847,19 @@ class ClipService:
             raise HTTPException(status_code=404, detail="Session not found")
         with source_in_use(self.db, job_id):
             video_path = self._local_source_video(job_row)
+            voice = None if unfiltered else self._streamer_voice(video_path, job_id)
             audio_key = self._caption_audio_cache_key(video_path)
             transcript = self._load_caption_transcript(audio_key) if audio_key else None
             if transcript:
-                words = slice_transcript_words(transcript, start, end)
-                if words:
-                    return {"source": "scan", "words": words}
+                window, heard = window_transcript(transcript, start, end, voice)
+                if heard:
+                    return {"source": "scan", "words": slice_transcript_words(window, start, end)}
             cache = self.__dict__.setdefault("_window_words", {})
             key = (job_id, round(float(start), 2), round(float(end), 2))
+            # The cache holds the decode as heard; the filter applies on the
+            # way out, so the setting and a newly built map take effect.
             if key in cache:
-                return {"source": "decode", "words": cache[key]}
+                return {"source": "decode", "words": filter_words(cache[key], voice, start)}
             if not decode:
                 return {"source": "none", "words": []}
             temp_dir = os.path.join(self.data_root, "temp")
@@ -3602,7 +3876,7 @@ class ClipService:
         cache[key] = words
         while len(cache) > self._WINDOW_WORDS_KEEP:
             cache.pop(next(iter(cache)))
-        return {"source": "decode", "words": words}
+        return {"source": "decode", "words": filter_words(words, voice, start)}
 
     def _record_requested_caption(self, clip_id: str, job_id: str, start: float,
                                   end: float, text: str) -> None:
@@ -3614,9 +3888,14 @@ class ClipService:
         from engines.caption.caption_edits import retime_edited_words, words_to_text
 
         machine = self.window_caption_words(job_id, start, end, decode=True)["words"]
+        timings = machine
         if not machine:
+            # Every word heard here was someone else's: the creator's line is
+            # timed on them, as save_caption does, and nothing was on screen.
+            timings = self.window_caption_words(job_id, start, end, decode=True, unfiltered=True)["words"]
+        if not timings:
             return
-        words = retime_edited_words(machine, text)
+        words = retime_edited_words(timings, text)
         if words:
             self.db.record_caption_edit(clip_id, job_id, start, end, words,
                                         machine_text=words_to_text(machine))
@@ -3656,7 +3935,7 @@ class ClipService:
             )
             return None
 
-        from engines.caption.whisper_asr import generate_ass_for_clip
+        from engines.caption.asr import generate_ass_for_clip
 
         # One synthetic segment: generate_tiktok_ass flattens segments into a
         # single word stream anyway, and chunks on real pauses in the timings.
@@ -3678,13 +3957,26 @@ class ClipService:
         end: float,
         ass_path: str,
         style: Any,
+        voice: Any = None,
     ) -> Optional[str]:
-        """Run the accurate short-window caption pass, returning only a real file."""
-        from engines.caption.whisper_asr import generate_ass_for_clip
+        """Run the accurate short-window caption pass, returning only a real file.
+
+        ``voice`` (an active streamer-voice map) drops the words the streamer
+        did not say from the decode before it is written.
+        """
+        from engines.caption.asr import generate_ass_for_clip, transcribe_clip_window
+        from engines.caption.streamer_voice import filter_transcript
 
         try:
             proc_mode = self.db.get_setting("processingMode", None)
             cap_settings = {"processingMode": proc_mode} if proc_mode else None
+            # Without a map the call is exactly what it always was.
+            decoded = {}
+            if voice is not None and voice.active:
+                decoded["transcript"] = filter_transcript(transcribe_clip_window(
+                    video_path, start, end, ass_path.replace(".ass", ".wav"),
+                    settings=cap_settings,
+                ), voice, start)
             written = generate_ass_for_clip(
                 video_path,
                 start,
@@ -3692,6 +3984,7 @@ class ClipService:
                 ass_path,
                 style=style,
                 settings=cap_settings,
+                **decoded,
             )
             return written if written and os.path.exists(written) else None
         except Exception:
@@ -3707,7 +4000,7 @@ class ClipService:
     @staticmethod
     def _caption_transcript_cache_labels() -> List[str]:
         """Transcript cache labels to look for, most current first."""
-        from engines.caption.whisper_asr import asr_cache_label
+        from engines.caption.asr import asr_cache_label
 
         # One backend, one label. The whisper compatibility labels went with
         # the whisper backend on 2026-09-01: nothing on disk carried them, and
@@ -3744,7 +4037,7 @@ class ClipService:
         style: Any,
         clip_id: str,
     ) -> Optional[str]:
-        from engines.caption.whisper_asr import generate_ass_from_transcript
+        from engines.caption.asr import generate_ass_from_transcript
 
         try:
             return generate_ass_from_transcript(
@@ -3784,8 +4077,13 @@ class ClipService:
         end: float,
         enabled_override: bool | None = None,
         prefer_alignment: bool = True,
+        job_id: Optional[str] = None,
     ) -> str | None:
-        """Creator correction, else the scan's own words, else a short-window decode."""
+        """Creator correction, else the scan's own words, else a short-window decode.
+
+        ``job_id`` only names the streamer for a streamer-voice map that has
+        to be built after the fact (_streamer_voice).
+        """
         style = self._caption_style(enabled_override)
         if not style.enabled:
             return None
@@ -3797,10 +4095,16 @@ class ClipService:
 
         # A correction outranks every decode below it. It has to: the per-clip
         # ASR is not stable across boundaries, so re-deciding from the audio
-        # would quietly discard what the creator told us the words are.
+        # would quietly discard what the creator told us the words are. It is
+        # never streamer-filtered either: those are the creator's own words.
         corrected = self._corrected_caption_ass(clip_id, start, end, ass_path, style)
         if corrected:
             return corrected
+
+        # Machine words below are the streamer's only (Settings > "Only
+        # caption my voice"): the scan's words and a fresh decode alike, so a
+        # re-render never brings back a line the first render left out.
+        voice = self._streamer_voice(video_path, job_id)
 
         # The scan already transcribed this recording end to end, with every
         # word timed against the whole VOD. Decoding the clip's own seconds
@@ -3813,6 +4117,11 @@ class ClipService:
         if audio_key:
             transcript = self._load_caption_transcript(audio_key)
             if transcript:
+                heard = None
+                if voice is not None and voice.active:
+                    from engines.caption.streamer_voice import window_transcript
+
+                    transcript, heard = window_transcript(transcript, start, end, voice)
                 written = self._write_cached_caption_ass(
                     transcript,
                     start,
@@ -3823,6 +4132,12 @@ class ClipService:
                 )
                 if written and self._ass_has_dialogue(written):
                     return written
+                if heard and not transcript["segments"][0]["words"]:
+                    # The scan heard words here and none were the streamer's:
+                    # no caption. A decode of the same seconds would be
+                    # filtered the same way, at the cost of a model load.
+                    logger.info("Clip %s: every caption word was another voice; no caption", clip_id)
+                    return None
 
         if not prefer_alignment:
             return None
@@ -3833,6 +4148,7 @@ class ClipService:
             end,
             ass_path,
             style,
+            **({"voice": voice} if voice is not None else {}),
         )
 
     def _frontend_clip_response(self, clip_id: str) -> Dict[str, Any]:
@@ -4235,6 +4551,9 @@ class SettingsService:
         "performanceProfile",
         "exportLayout",
         "captionStyle",
+        # Settings > "Only caption my voice". Unset means on: read at scan
+        # time (job_manager) and at every caption read or render.
+        "captionStreamerOnly",
         "theme",
         "recallStorageCapGb",
         "sourceRetentionDays",
@@ -4270,6 +4589,9 @@ class SettingsService:
                     try:
                         value = max(1, min(365, int(round(float(value)))))
                     except (TypeError, ValueError):
+                        continue
+                elif key == "captionStreamerOnly":
+                    if not isinstance(value, bool):
                         continue
                 self.db.set_setting(key, value)
         return self.get_all()
@@ -4576,6 +4898,11 @@ class SystemService:
             # must clear it too, or the tables dangle with orphaned references.
             cursor.execute("DELETE FROM clip_labels")
             cursor.execute("DELETE FROM ranker_metadata")
+            # The creator's trims and caption corrections are their data too,
+            # and they outlive a deleted session, so a wipe that skipped them
+            # left typed words and cut points behind after "wipe everything".
+            cursor.execute("DELETE FROM clip_boundary_edits")
+            cursor.execute("DELETE FROM clip_caption_edits")
             cursor.execute("DELETE FROM stream_memory_shadow_runs")
             cursor.execute("DELETE FROM stream_memory_interactions")
             cursor.execute("DELETE FROM stream_memory_search_sessions")
@@ -4594,6 +4921,10 @@ class SystemService:
         # model too so personalization really resets.
         for folder in ("temp", "exports", "cache", "jobs", "assets", "memory"):
             self._clear_folder(folder)
+        # The streamer voice profiles are learned from the scans being wiped
+        # (vectors and detector weights per channel, no audio).
+        from engines.caption.voice_profile import clear_profiles
+        clear_profiles(self.data_root)
         # Resolve against THIS service's data root, not the import-time
         # constant: a caller holding a redirected root must not have the real
         # install's champion deleted out from under it.

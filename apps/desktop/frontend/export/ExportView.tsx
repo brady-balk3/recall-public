@@ -13,6 +13,7 @@ import { durationOf } from "../lib/reviewDeck";
 import type { Clip, ExportLayout, Session } from "../lib/store";
 import { hypeOf } from "../home/homeModel";
 import { KeepersReel } from "../ui/KeepersReel";
+import { LazyFill } from "../ui/LazyFill";
 import { sessionDate } from "../ui/SessionCard";
 import { ExportTabs } from "./ExportTabs";
 import type { View } from "../shell/views";
@@ -56,6 +57,9 @@ export function groupByStream(items: ExportItem[]) {
   }
   return order.map((id) => groups.get(id)!);
 }
+
+/** Groups drawn in full on open, so the first screen never waits. */
+const EAGER_GROUPS = 3;
 
 export function ExportView(props: ExportViewProps) {
   const { items, selectedIds, exporting, layout, captionsOn, onToggleSelect, onToggleSession, onClearSelection, onExportSelected, onExportIds, onEdit, onView, onChangeFormat, compilationsCount } = props;
@@ -134,7 +138,7 @@ export function ExportView(props: ExportViewProps) {
           </div>
 
           <div className="xgroups">
-            {groups.map(({ session, items: groupItems }) => {
+            {groups.map(({ session, items: groupItems }, groupIndex) => {
               const picked = groupItems.filter(({ clip }) => selectedIds.has(clip.id)).length;
               const allPicked = picked === groupItems.length;
               return (
@@ -147,8 +151,8 @@ export function ExportView(props: ExportViewProps) {
                     </div>
                     <button type="button" className="btn sm ghost" aria-pressed={allPicked} onClick={() => onToggleSession(session.id)}>{allPicked ? "Clear" : "Select all"}</button>
                   </div>
-                  <div className="x-clips">
-                    {groupItems.map((item) => {
+                  <LazyFill eager={groupIndex < EAGER_GROUPS} count={groupItems.length} className="x-clips" placeholderClass="x-ph">
+                    {() => groupItems.map((item) => {
                       const { clip } = item;
                       const selected = selectedIds.has(clip.id);
                       return (
@@ -167,7 +171,7 @@ export function ExportView(props: ExportViewProps) {
                         </article>
                       );
                     })}
-                  </div>
+                  </LazyFill>
                 </section>
               );
             })}

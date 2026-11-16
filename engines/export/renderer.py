@@ -247,6 +247,16 @@ def _run_with_progress(
     )
 
 
+def _remove_quietly(path: Optional[str]) -> None:
+    """Delete a render's scratch file (the per-frame avatar mask), if any."""
+    if not path:
+        return
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 def render_clip(
     video_path: str,
     clip: GameClip,
@@ -337,6 +347,22 @@ def _render_clip_to_directory(
         if layout_type in ("vertical_split", "gameplay_pip", "vtuber_overlay")
         else None
     )
+    vtuber_overlay = clip.layout.get("vtuber_overlay")
+    mask_video = None
+    if layout_type == "vtuber_overlay" and isinstance(vtuber_overlay, dict) and vtuber_overlay.get("per_frame") and facecam_metadata:
+        # Key the avatar frame by frame with the anime matting model; if that
+        # can't run, the still plate keys it as before.
+        from engines.vision import avatar_matting
+
+        if avatar_matting.available():
+            mask_video = os.path.join(output_dir, f"clip_{clip.clip_id}_avatar.mkv")
+            if avatar_matting.write_avatar_video(
+                video_path, facecam_metadata, float(clip.start), float(clip.end), mask_video,
+                cancel_check=cancel_check,
+            ):
+                vtuber_overlay = {**vtuber_overlay, "avatar_video": mask_video}
+            else:
+                mask_video = None
     cmd = build_ffmpeg_command(
         video_path,
         output_path,
@@ -361,7 +387,7 @@ def _render_clip_to_directory(
         # Script-authored opt-in for PNG/VTuber cutouts. Normal app layouts do
         # not carry this key, so every existing export remains byte-for-byte on
         # its previous graph until the treatment is explicitly approved.
-        vtuber_overlay=clip.layout.get("vtuber_overlay"),
+        vtuber_overlay=vtuber_overlay,
     )
 
     print(f"Rendering {output_filename}...")
@@ -386,6 +412,7 @@ def _render_clip_to_directory(
                 cancel_check=cancel_check,
             )
     except FFmpegCancelled:
+        _remove_quietly(mask_video)
         try:
             if os.path.exists(output_path):
                 os.remove(output_path)
@@ -393,6 +420,7 @@ def _render_clip_to_directory(
             logger.debug("Could not delete cancelled render %s", output_path, exc_info=True)
         raise
     except subprocess.CalledProcessError as e:
+        _remove_quietly(mask_video)
         error_msg = (
             e.stderr.decode("utf-8", errors="replace")
             if isinstance(e.stderr, bytes)
@@ -401,6 +429,7 @@ def _render_clip_to_directory(
         print(f"FFmpeg render failed for {clip.clip_id}:\n{error_msg}")
         raise RuntimeError(f"FFmpeg export failed: {error_msg}")
 
+    _remove_quietly(mask_video)
     # Write metadata log alongside the MP4. `captions_burned` records whether
     # this render actually carries burned-in captions (the ass filter ran), so
     # the in-app editor never has to guess from today's caption setting.

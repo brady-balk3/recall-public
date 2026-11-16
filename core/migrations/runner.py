@@ -1260,6 +1260,16 @@ def _migration_037_job_streamer(conn: sqlite3.Connection) -> None:
     _add_column(conn, "jobs", "streamer", "TEXT")
 
 
+def _migration_038_clip_labels_clip_index(conn: sqlite3.Connection) -> None:
+    """Index creator labels by clip.
+
+    Undoing a Keep or Pass deletes ``WHERE clip_id = ? AND event = ?``. Only
+    (job_id, id) was indexed, so that scanned every label. Labels outlive
+    their session on purpose (training data), so the table only grows.
+    """
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_clip_labels_clip ON clip_labels(clip_id)")
+
+
 MIGRATIONS: list[Migration] = [
     ("001_initial_schema", _migration_001_initial),
     ("002_job_telemetry", _migration_002_job_telemetry),
@@ -1298,6 +1308,7 @@ MIGRATIONS: list[Migration] = [
     ("035_clip_origin", _migration_035_clip_origin),
     ("036_second_look_deck_wording", _migration_036_second_look_deck_wording),
     ("037_job_streamer", _migration_037_job_streamer),
+    ("038_clip_labels_clip_index", _migration_038_clip_labels_clip_index),
 ]
 
 

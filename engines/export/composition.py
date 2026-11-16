@@ -486,6 +486,22 @@ def build_video_graph(
             f"{_fmt_filter_number(lower_fade)})\\,0\\,1)'"
             if lower_fade > 0.0 else "null"
         )
+        if vtuber_overlay.get("avatar_video"):
+            # Per-frame avatar (avatar_matting): its own cleaned colour and
+            # alpha, frame for frame with the clip; held on its last frame if
+            # it comes up a frame short. The bottom fade goes on its alpha.
+            alpha_fade = (
+                "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*clip((H-Y)/(H*"
+                f"{_fmt_filter_number(lower_fade)})\\,0\\,1)'"
+                if lower_fade > 0.0 else "null"
+            )
+            return [
+                "[0:v]setpts=PTS-STARTPTS[bg_src]",
+                f"[bg_src]{fill(out_w, out_h)}[bg_scaled]",
+                "[1:v]setpts=PTS-STARTPTS,format=rgba,tpad=stop_mode=clone:stop_duration=3600,"
+                f"scale={avatar_w}:{avatar_h}{scale_flags},{alpha_fade}[avatar]",
+                f"[bg_scaled][avatar]overlay=x=(W-w)/2:y={overlay_y}:shortest=1:format=auto,setsar=1[outv_raw]",
+            ]
         return [
             "[0:v]setpts=PTS-STARTPTS,split[bg_src][avatar_src]",
             f"[bg_src]{fill(out_w, out_h)}[bg_scaled]",

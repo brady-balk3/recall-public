@@ -4,8 +4,7 @@ import asyncio
 import threading
 import uuid
 import json
-import queue
-import re
+import math
 import time
 from typing import Dict, Any, Optional
 from core.database import DatabaseManager
@@ -75,28 +74,15 @@ STAGE_LABELS = {
     "Cancelling": "Cancelling",
 }
 
-# Message emitted from the Perception phase carries the scanned timecode, e.g.
-# "Processed timestamp 84.0s" — parse it to derive scan position / speed.
-_SCAN_TS_RE = re.compile(r"timestamp\s+([\d.]+)\s*s", re.IGNORECASE)
-
-# Parallel perception reports total completed footage instead of a linear
-# timecode, e.g. "... 1520.0s of footage scanned" (slices finish out of order).
-_SCAN_FOOTAGE_RE = re.compile(r"([\d.]+)\s*s of footage scanned", re.IGNORECASE)
-
-# The "Video metadata: {...'duration': 11478.2...}" message carries the real
-# VOD length as soon as ffprobe runs — long before run_pipeline() returns it.
-# Parse it out so the UI clock/ETA don't sit blank for the whole scan.
-_DURATION_RE = re.compile(r"'duration':\s*([\d.]+)")
-
-# Long-running sub-stages (e.g. facecam refinement) report their own time
-# budget in the message, e.g. "...(19.7 min budgeted)...". Surface it as a
-# fallback ETA when the stage's own progress signal is flat.
-_BUDGET_RE = re.compile(r"\(([\d.]+)\s*min budgeted\)", re.IGNORECASE)
-_TWITCH_DOWNLOAD_RE = re.compile(r"Downloading Twitch VOD:\s*(\d{1,3})%", re.IGNORECASE)
+# Scan position, VOD length, stage budget and download share arrive as numbers
+# (the pipeline's telemetry dict, resolve_input's download_callback). Progress
+# messages are display text only: nothing here parses them.
 
 STAGE_WINDOWS = {
     "Init": (0.0, 0.05),
-    "Resolving Input": (0.0, 0.08),
+    # Ends where the pipeline's first emit begins (vod_resolver's
+    # RESOLVE_DONE_PROGRESS), so the download never overlaps Perception.
+    "Resolving Input": (0.0, 0.05),
     "Perception": (0.08, 0.45),
     "Reaction": (0.45, 0.70),
     "Event": (0.45, 0.55),
@@ -137,8 +123,13 @@ class JobManager:
         # Live telemetry per job_id (populated while a job runs). Fields not in
         # the DB, e.g. ETA samples and derived scan speed.
         self._telemetry: Dict[str, Dict[str, Any]] = {}
-        # SSE subscribers: job_id -> set[queue.Queue]
-        self._subscribers: Dict[str, set] = {}
+        # The scan thread, a request thread cancelling it, the preview-render
+        # pool and every get_job all touch _telemetry. This lock covers its
+        # compound updates and snapshots only: it is never held across a DB
+        # write, a subprocess or event publishing, and no other lock is taken
+        # while it is held (nor is it taken under _sub_lock), so the two can
+        # never deadlock each other.
+        self._telemetry_lock = threading.Lock()
         # HTTP SSE uses event-loop-owned asyncio queues so an idle stream never
         # occupies Starlette's shared worker threadpool. Pipeline work publishes
         # from ordinary worker threads via loop.call_soon_threadsafe().
@@ -179,25 +170,15 @@ class JobManager:
         """True while this process has a live pipeline thread for the job."""
         return job_id in self._active_jobs
 
-    def has_active_jobs(self) -> bool:
-        """True while any queued or running pipeline belongs to this process."""
-        return bool(self._active_jobs)
+    def has_active_jobs(self, excluding: Optional[str] = None) -> bool:
+        """True while any queued or running pipeline belongs to this process,
+        other than ``excluding`` (a job whose scan has already completed)."""
+        if excluding is None:
+            return bool(self._active_jobs)
+        # list() copies the keys in one step; another thread may add a job.
+        return any(job_id != excluding for job_id in list(self._active_jobs))
 
     # --- SSE subscription plumbing -------------------------------------------
-    def subscribe(self, job_id: str) -> "queue.Queue":
-        q: queue.Queue = queue.Queue()
-        with self._sub_lock:
-            self._subscribers.setdefault(job_id, set()).add(q)
-        return q
-
-    def unsubscribe(self, job_id: str, q: "queue.Queue"):
-        with self._sub_lock:
-            subs = self._subscribers.get(job_id)
-            if subs:
-                subs.discard(q)
-                if not subs:
-                    self._subscribers.pop(job_id, None)
-
     def subscribe_async(self, job_id: str, max_events: int = 256):
         """Return an event-loop-owned, bounded subscriber for HTTP SSE.
 
@@ -254,13 +235,7 @@ class JobManager:
 
     def _publish(self, job_id: str, event: dict):
         with self._sub_lock:
-            sync_subscribers = list(self._subscribers.get(job_id, ()))
             async_subscribers = list(self._async_subscribers.get(job_id, {}).values())
-        for q in sync_subscribers:
-            try:
-                q.put_nowait(event)
-            except Exception:
-                pass
         for loop, q in async_subscribers:
             try:
                 loop.call_soon_threadsafe(self._offer_async_event, q, event)
@@ -425,14 +400,30 @@ class JobManager:
     def get_job(self, job_id: str, include_events: bool = True) -> Optional[Dict[str, Any]]:
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT * FROM jobs WHERE id = ?', (job_id,))
+            # Every column except framing, the 1-3 MB scan model that only the
+            # manual-framing path reads (and selects for itself). This row
+            # backs /jobs/{id} and every SSE snapshot, so SELECT * shipped
+            # megabytes per poll. Read from the schema rather than listed by
+            # hand so a column a later migration adds still reaches the job
+            # payload, as it did under SELECT *.
+            cursor.execute('PRAGMA table_info(jobs)')
+            columns = ', '.join(
+                '"' + str(info[1]).replace('"', '""') + '"'
+                for info in cursor.fetchall() if info[1] != 'framing'
+            )
+            cursor.execute(f'SELECT {columns} FROM jobs WHERE id = ?', (job_id,))
             row = cursor.fetchone()
             if not row:
                 return None
             job = dict(row)
 
         # --- Derived / live telemetry, additive to the stored columns --------
-        tel = self._telemetry.get(job_id, {})
+        # A snapshot: the response is serialized after this returns, while the
+        # scan thread may still be adding stages to the live timings dict.
+        with self._telemetry_lock:
+            tel = dict(self._telemetry.get(job_id, {}))
+            if isinstance(tel.get("stage_timings"), dict) or tel.get("stage_detail"):
+                tel["stage_timings"] = self._timings_with_detail(tel)
         job["stage_label"] = STAGE_LABELS.get(job.get("current_stage"), job.get("current_stage"))
 
         started = self._row_ts(job.get("started_at")) or tel.get("started_at")
@@ -547,8 +538,11 @@ class JobManager:
         )
         if not device:
             try:
-                from core.device import get_torch_device
-                device = get_torch_device()
+                # A label read on every job fetch in the idle API process:
+                # device_hint never creates a CUDA context, where the full
+                # GPU gate's probe would hold one (VRAM) until the app exits.
+                from core.device import device_hint
+                device = device_hint()
             except Exception:  # noqa: BLE001
                 device = None
         semantic_bad = bool(semantic) and (
@@ -826,14 +820,21 @@ class JobManager:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def update_job_progress(self, job_id: str, phase: str, progress: float,
-                            status: str = "running", message: str = None,
-                            telemetry: dict = None):
-        now = time.time()
+    def _record_progress(self, job_id: str, phase: str, progress: float,
+                         message: Optional[str], telemetry: Optional[dict], now: float,
+                         status: str = "running"):
+        """Fold one progress report into the job's live telemetry.
+
+        The caller holds _telemetry_lock. Returns the telemetry dict, the scan
+        position for the jobs row, a VOD length learned by this report (None
+        when there is none), which the caller stores outside the lock, and the
+        progress to store and publish (see _held_progress).
+        """
         tel = self._telemetry.setdefault(job_id, {
             "started_at": now, "samples": [], "clips_found": 0, "phase": None,
             "stage_timings": {},
         })
+        progress = self._held_progress(tel, progress, status)
 
         telemetry = telemetry or {}
         incoming_eta_scope = telemetry.get("eta_scope")
@@ -873,52 +874,50 @@ class JobManager:
         if telemetry.get("stage_eta_seconds") is not None:
             tel["eta_scope_updated_at"] = now
 
-        # Derive scan position / speed from Perception messages when present.
-        # Sequential mode reports a linear timecode; parallel mode reports
-        # total completed footage (slices finish out of order).
+        # The pipeline passes scan position, VOD length and stage budget as
+        # numbers; the message is never parsed for them.
+        structured_scan = telemetry.get("scanned_seconds") is not None
+        if structured_scan and "scan_speed" not in telemetry:
+            # Sequential perception reports a position but no rate; give it the
+            # elapsed average, which is what parsing its message used to give.
+            # Parallel perception always sends the key, even while it is None.
+            try:
+                tel["scan_speed"] = round(
+                    float(telemetry["scanned_seconds"]) / max(0.001, now - tel["started_at"]), 2
+                )
+            except Exception:
+                pass
+        learned_duration = None
+        if telemetry.get("duration") is not None and "duration" not in tel:
+            try:
+                duration = float(telemetry["duration"])
+            except (TypeError, ValueError):
+                duration = 0.0
+            if math.isfinite(duration) and duration > 0:
+                tel["duration"] = duration
+                learned_duration = duration
+        # Sub-stage timings and Perception worker finish times, keyed by stage.
+        # Held apart from stage_timings, which the ETA reads live: an entry
+        # there means "this stage has started" to _future_stage_eta and to the
+        # transition below, and Reaction's early steps report during
+        # Perception. Folded in only where timings are stored or served.
+        detail = telemetry.get("stage_detail")
+        if isinstance(detail, dict):
+            held = tel.setdefault("stage_detail", {})
+            for stage, fields in detail.items():
+                if isinstance(stage, str) and isinstance(fields, dict):
+                    held.setdefault(stage, {}).update(fields)
+
+        # Long sub-stages (Smart scan refinement) report a time budget; it
+        # stands in as the ETA while their own progress is flat.
+        if telemetry.get("stage_budget_seconds") is not None:
+            try:
+                tel["stage_budget_seconds"] = float(telemetry["stage_budget_seconds"])
+                tel["stage_budget_started_at"] = now
+            except (TypeError, ValueError):
+                pass
+
         scanned_seconds = tel.get("scanned_seconds")
-        if message:
-            m = _SCAN_TS_RE.search(message) or _SCAN_FOOTAGE_RE.search(message)
-            if m:
-                try:
-                    scanned_seconds = float(m.group(1))
-                    tel["scanned_seconds"] = scanned_seconds
-                    elapsed = max(0.001, now - tel["started_at"])
-                    # Structured worker telemetry supplies a rolling aggregate
-                    # rate. Keep the elapsed-average fallback for sequential or
-                    # legacy progress messages only.
-                    if telemetry.get("scan_speed") is None:
-                        tel["scan_speed"] = round(scanned_seconds / elapsed, 2)
-                except Exception:
-                    pass
-
-            # Grab the real VOD length the moment ffprobe reports it, instead
-            # of waiting for the whole pipeline to return it at the very end.
-            if "duration" not in tel:
-                dm = _DURATION_RE.search(message)
-                if dm:
-                    try:
-                        duration = float(dm.group(1))
-                        if duration > 0:
-                            tel["duration"] = duration
-                            with self.db.get_connection() as conn:
-                                conn.cursor().execute(
-                                    "UPDATE jobs SET duration = ? WHERE id = ?",
-                                    (duration, job_id)
-                                )
-                    except Exception:
-                        pass
-
-            # Long sub-stages (facecam refinement, etc.) self-report a time
-            # budget; use it as a fallback ETA while progress is flat.
-            bm = _BUDGET_RE.search(message)
-            if bm:
-                try:
-                    tel["stage_budget_started_at"] = now
-                    tel["stage_budget_seconds"] = float(bm.group(1)) * 60.0
-                except Exception:
-                    pass
-
         tel["updated_at"] = now
         tel["elapsed_seconds"] = round(now - tel["started_at"], 1)
         tel["message"] = message
@@ -928,6 +927,58 @@ class JobManager:
         if not samples or (now - samples[-1][0]) >= 1.0:
             samples.append((now, float(progress)))
             del samples[:-30]  # keep a bounded recent window
+        return tel, scanned_seconds, learned_duration, progress
+
+    @staticmethod
+    def _held_progress(tel: dict, progress, status: str):
+        """A running job's overall progress never goes back.
+
+        run_pipeline holds its own emits monotonic, but a job is more than one
+        run_pipeline call: the download reports first, from resolve_input, and
+        reached 0.075 while Perception began at 0.05, so the bar ran back on
+        every Twitch scan. The resolver's numbers now end where the pipeline's
+        begin; this is the backstop for the whole job, as _monotonic_emitter
+        is inside the pipeline. Only a running report is held: Cancelling,
+        Cancelled and Complete set their own number. _begin_scan gives each
+        run a fresh telemetry entry, so a retry starts from zero again.
+        Caller holds _telemetry_lock.
+        """
+        if status != "running":
+            return progress
+        try:
+            value = float(progress)
+        except (TypeError, ValueError):
+            return progress
+        if not math.isfinite(value):
+            return progress
+        highest = tel.get("progress_high_water")
+        if highest is not None and value < highest:
+            return highest
+        tel["progress_high_water"] = value
+        return progress
+
+    def update_job_progress(self, job_id: str, phase: str, progress: float,
+                            status: str = "running", message: str = None,
+                            telemetry: dict = None):
+        now = time.time()
+        with self._telemetry_lock:
+            tel, scanned_seconds, learned_duration, progress = self._record_progress(
+                job_id, phase, progress, message, telemetry, now, status,
+            )
+            stage_progress = tel.get("stage_progress")
+            stage_timings = json.dumps(self._timings_with_detail(tel))
+
+        if learned_duration is not None:
+            # Stored now, not when the pipeline returns, so the clock and ETA
+            # survive a reload mid-scan. Written outside the lock.
+            try:
+                with self.db.get_connection() as conn:
+                    conn.cursor().execute(
+                        "UPDATE jobs SET duration = ? WHERE id = ?",
+                        (learned_duration, job_id)
+                    )
+            except Exception:
+                pass
 
         with self.db.get_connection() as conn:
             conn.cursor().execute(
@@ -936,19 +987,24 @@ class JobManager:
                    stage_progress = ?, stage_timings = ? WHERE id = ?''',
                 (
                     phase, progress, status, message, scanned_seconds,
-                    tel.get("stage_progress"), json.dumps(tel.get("stage_timings", {})),
+                    stage_progress, stage_timings,
                     job_id,
                 )
             )
 
-        # Stage transition events.
-        prev_phase = tel.get("phase")
-        if phase != prev_phase:
+        # Stage transition events. The transition is decided under the lock so
+        # a cancel arriving mid-report cannot finish the same stage twice.
+        with self._telemetry_lock:
+            prev_phase = tel.get("phase")
+            stage_changed = phase != prev_phase
+            if stage_changed:
+                if prev_phase:
+                    self._finish_stage(job_id, prev_phase, now)
+                tel["phase"] = phase
+                tel.setdefault("stage_timings", {}).setdefault(phase, {"started_at": now})
+        if stage_changed:
             if prev_phase:
-                self._finish_stage(job_id, prev_phase, now)
                 self.emit_event(job_id, "stage_completed", phase=prev_phase)
-            tel["phase"] = phase
-            tel.setdefault("stage_timings", {}).setdefault(phase, {"started_at": now})
             self.emit_event(job_id, "stage_started", phase=phase,
                             message=message, progress=progress,
                             payload=self._event_payload(job_id, progress))
@@ -966,13 +1022,46 @@ class JobManager:
             return 1.0
         return round(max(0.0, min(1.0, (float(progress) - start) / (end - start))), 3)
 
+    # Written by _finish_stage. Detail never replaces them: history and the
+    # ETA read duration_seconds from every stored stage.
+    _TIMING_KEYS = ("started_at", "ended_at", "duration_seconds")
+
+    @classmethod
+    def _timings_with_detail(cls, tel: dict) -> dict:
+        """stage_timings with each stage's held detail folded in, as a copy.
+
+        Caller holds _telemetry_lock. Every stage keeps its own timing keys;
+        detail adds ``substages`` (Reaction, Perception) and ``workers``
+        (Perception) beside them. A stage that has detail but has not started
+        yet appears with the detail alone. That only happens mid-scan or in a
+        scan stopped before it reached the stage, and stage history reads
+        completed scans only, where every stage with detail has run.
+        """
+        timings = {
+            phase: dict(timing) if isinstance(timing, dict) else timing
+            for phase, timing in (tel.get("stage_timings") or {}).items()
+        }
+        for stage, fields in (tel.get("stage_detail") or {}).items():
+            entry = timings.setdefault(stage, {})
+            if isinstance(entry, dict):
+                entry.update({
+                    key: value for key, value in fields.items()
+                    if key not in cls._TIMING_KEYS
+                })
+        return timings
+
     def _finish_stage(self, job_id: str, phase: str, now: float):
+        # Caller holds _telemetry_lock.
         tel = self._telemetry.setdefault(job_id, {})
         timings = tel.setdefault("stage_timings", {})
         stage = timings.setdefault(phase, {})
         stage.setdefault("started_at", now)
         stage["ended_at"] = now
         stage["duration_seconds"] = round(max(0.0, now - stage["started_at"]), 1)
+
+    def _stage_timings_snapshot(self, job_id: str) -> dict:
+        with self._telemetry_lock:
+            return self._timings_with_detail(self._telemetry.get(job_id) or {})
 
     def _event_payload(self, job_id: str, progress: float = None) -> dict:
         tel = self._telemetry.get(job_id, {})
@@ -1034,8 +1123,8 @@ class JobManager:
         # A batch should pay the ASR warm-up cost once. The final queued job
         # schedules release after a short idle window instead of keeping the
         # model resident for the lifetime of the desktop app.
-        from engines.caption.whisper_asr import hold_whisper_models
-        hold_whisper_models()
+        from engines.caption.asr import hold_asr_models
+        hold_asr_models()
 
         # Register for cancellation before the worker starts, so a job can be
         # cancelled even while it's queued behind another scan.
@@ -1054,10 +1143,11 @@ class JobManager:
         """Reset the scan clock at the moment the job actually starts running
         (after any queue wait), so elapsed time never counts time spent queued."""
         now = time.time()
-        self._telemetry[job_id] = {
-            "started_at": now, "samples": [], "clips_found": 0, "phase": None,
-            "stage_timings": {},
-        }
+        with self._telemetry_lock:
+            self._telemetry[job_id] = {
+                "started_at": now, "samples": [], "clips_found": 0, "phase": None,
+                "stage_timings": {},
+            }
         with self.db.get_connection() as conn:
             conn.cursor().execute(
                 "UPDATE jobs SET started_at = CURRENT_TIMESTAMP, clips_found = 0 WHERE id = ?",
@@ -1153,6 +1243,33 @@ class JobManager:
             deck_scores[clip.clip_id] = second_look_deck_score(index)
         clip_found_events = []
 
+        # Every thumbnail is an ffmpeg run. Make them all before the connection
+        # opens: from the first INSERT below this connection holds SQLite's
+        # write lock until it commits, and a label click or settings save
+        # waited behind every remaining ffmpeg run.
+        media = []
+        for clip in clips:
+            matched_export = next(
+                (path for path in exported_paths if f"clip_{clip.clip_id}.mp4" in path),
+                None,
+            )
+            thumb_path = None
+            if matched_export:
+                try:
+                    from core.thumbnails import generate_thumbnail, clip_relative_peak
+                    seek = clip_relative_peak(
+                        getattr(clip, "peak_timestamp", None), clip.start, clip.end
+                    )
+                    thumb_path = generate_thumbnail(
+                        matched_export,
+                        clip.clip_id,
+                        os.path.dirname(matched_export),
+                        seek_seconds=seek,
+                    )
+                except Exception:
+                    thumb_path = None
+            media.append((matched_export, thumb_path))
+
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
             from core.clip_number import next_clip_number
@@ -1178,13 +1295,9 @@ class JobManager:
                 clip.clip_id: first_clip_number + offset
                 for offset, clip in enumerate(chronological)
             }
-            for clip in clips:
+            for clip, (matched_export, thumb_path) in zip(clips, media):
                 clip_id = clip.clip_id
                 is_second_look = getattr(clip, "review_tier", None) == REVIEW_TIER_SECOND_LOOK
-                matched_export = next(
-                    (path for path in exported_paths if f"clip_{clip_id}.mp4" in path),
-                    None,
-                )
                 caption = caption_by_clip.get(clip_id)
                 story = story_by_id.get(getattr(clip, "story_id", None))
                 title = caption.title if caption else None
@@ -1240,22 +1353,6 @@ class JobManager:
                         "marker_time": getattr(clip, "recall_marker_time", None),
                     }, separators=(",", ":"))
 
-                thumb_path = None
-                if matched_export:
-                    try:
-                        from core.thumbnails import generate_thumbnail, clip_relative_peak
-                        seek = clip_relative_peak(
-                            getattr(clip, "peak_timestamp", None), clip.start, clip.end
-                        )
-                        thumb_path = generate_thumbnail(
-                            matched_export,
-                            clip_id,
-                            os.path.dirname(matched_export),
-                            seek_seconds=seek,
-                        )
-                    except Exception:
-                        thumb_path = None
-
                 post_tags = json.dumps(caption.tags) if caption and caption.tags else None
                 cursor.execute(
                     '''INSERT INTO clips
@@ -1306,11 +1403,21 @@ class JobManager:
                 })
         return clip_found_events
 
-    def _run_post_scan_janitor(self):
-        """Apply the unified Recall/source lifecycle after a successful scan."""
+    def _run_post_scan_janitor(self, job_id: str):
+        """Apply the unified Recall/source lifecycle after a successful scan.
+
+        Runs on the scan thread after the job is marked completed, while it is
+        still in _active_jobs. The janitor defers whenever a scan is active, so
+        it used to defer for this job too and never ran here at all; cleanup
+        only happened at app start, in Storage or on session delete. The
+        finished job is now excluded from that check. Any other job, queued
+        behind this one or started meanwhile, still defers the cleanup: it may
+        be about to read a source or a cache file. A failed or cancelled scan
+        does not get here, so nothing a retry might want is touched for it.
+        """
         from core.storage_lifecycle import SourceLifecycleService
 
-        lifecycle = SourceLifecycleService(self.db, self)
+        lifecycle = SourceLifecycleService(self.db, self, finished_job_id=job_id)
         lifecycle.reconcile_sources(remove_expired=True)
         lifecycle.reconcile_recall_storage()
 
@@ -1373,22 +1480,36 @@ class JobManager:
             from pipeline.ingest.vod_resolver import resolve_input
             from pipeline.orchestrator.run_pipeline import build_scan_profile, run_pipeline
 
+            # resolve_input hands over the share downloaded as a number, just
+            # before the progress line it belongs to, and that line carries it
+            # to the job. A line without one (fetching info, finalizing) clears
+            # the download ETA, as it did when the share was parsed from text.
+            download_line = {}
+
+            def download_share_cb(fraction, eta_seconds=None):
+                download_line["fraction"] = fraction
+                download_line["eta"] = eta_seconds
+
             def download_progress_cb(message, progress, eta_seconds=None):
                 # Let a cancel during download abort promptly (plan 6.1): raising
                 # here propagates out of resolve_input, which kills the
                 # TwitchDownloaderCLI download subprocess.
                 if self._active_jobs.get(job_id, {}).get("cancel_flag"):
                     raise InterruptedError("Job was cancelled")
-                tel = self._telemetry.setdefault(job_id, {})
-                match = _TWITCH_DOWNLOAD_RE.search(message or "")
-                if match:
-                    ratio = min(1.0, max(0.0, int(match.group(1)) / 100.0))
-                    tel["download_progress"] = ratio
-                    started = tel.setdefault("download_started_at", time.time())
-                    if eta_seconds is None and ratio >= 0.02:
-                        elapsed = max(0.0, time.time() - started)
-                        eta_seconds = elapsed * (1.0 - ratio) / ratio
-                tel["download_eta_seconds"] = eta_seconds
+                fraction = download_line.pop("fraction", None)
+                eta = download_line.pop("eta", None)
+                if eta is None:
+                    eta = eta_seconds
+                now = time.time()
+                with self._telemetry_lock:
+                    tel = self._telemetry.setdefault(job_id, {})
+                    if fraction is not None:
+                        ratio = min(1.0, max(0.0, float(fraction)))
+                        tel["download_progress"] = ratio
+                        started = tel.setdefault("download_started_at", now)
+                        if eta is None and ratio >= 0.02:
+                            eta = max(0.0, now - started) * (1.0 - ratio) / ratio
+                    tel["download_eta_seconds"] = eta
                 self.update_job_progress(job_id, "Resolving Input", progress, message=message)
 
             # 1. Resolve URL or Path
@@ -1397,6 +1518,7 @@ class JobManager:
                 output_dir=os.path.join(get_data_dir(), "assets"),
                 progress_callback=download_progress_cb,
                 cancel_check=lambda: bool(self._active_jobs.get(job_id, {}).get("cancel_flag")),
+                download_callback=download_share_cb,
             )
             self._telemetry.setdefault(job_id, {}).pop("download_eta_seconds", None)
             self._telemetry.setdefault(job_id, {})["download_progress"] = 1.0
@@ -1423,7 +1545,9 @@ class JobManager:
                 "scan_profile",
                 phase="Init",
                 message=f"{scan_profile['name']} is ready.",
-                progress=0.02,
+                # No progress number: this fires after the download reached
+                # 0.05, and the live view takes any event's number as the
+                # scan's, so a fixed 0.02 here dipped the bar on a real scan.
                 payload={"scan_profile": scan_profile},
             )
             
@@ -1541,10 +1665,19 @@ class JobManager:
             }
             with self.db.get_connection() as conn:
                 title_row = conn.cursor().execute(
-                    "SELECT session_name FROM jobs WHERE id = ?", (job_id,),
+                    "SELECT session_name, streamer FROM jobs WHERE id = ?", (job_id,),
                 ).fetchone()
             if title_row and title_row["session_name"]:
                 pipeline_settings["session_name"] = title_row["session_name"]
+            # A re-scan already knows the channel; Twitch metadata names it
+            # otherwise. Only the streamer-voice profile reads it.
+            if title_row and title_row["streamer"]:
+                pipeline_settings.setdefault("streamer", title_row["streamer"])
+            # Settings > "Only caption my voice", default on. The desktop app
+            # sends it with each scan; any other caller gets the saved choice.
+            if "captionStreamerOnly" not in pipeline_settings:
+                pipeline_settings["captionStreamerOnly"] = (
+                    self.db.get_setting("captionStreamerOnly", True) is not False)
             (
                 signals, stories, clips, captions, exported_paths, vod_duration,
                 reaction_timeline, vod_transcript,
@@ -1577,7 +1710,7 @@ class JobManager:
                         captions=captions,
                         exported_paths=exported_paths,
                         duration=vod_duration,
-                        stage_timings=self._telemetry.get(job_id, {}).get("stage_timings", {}),
+                        stage_timings=self._stage_timings_snapshot(job_id),
                         ranker_mode=ranker_status(self.db).get("active_mode"),
                         ranker_diagnostics=self._telemetry.get(job_id, {}).get(
                             "ranker_diagnostics", {}
@@ -1684,10 +1817,12 @@ class JobManager:
             self.emit_event(job_id, "job_completed", phase="Complete", progress=1.0,
                             payload={"clips_found": clips_found})
 
-            # Keep the scan cache bounded (plan 4.3). This job's entries are
-            # the newest, so LRU eviction only touches older VODs' caches.
+            # Keep the scan cache bounded (plan 4.3). Eviction goes by tier,
+            # then oldest first: over the target, this VOD's analysis WAV can
+            # go too, which costs only a re-scan its extraction; nothing in
+            # review reads it. A janitor error never fails a completed scan.
             try:
-                self._run_post_scan_janitor()
+                self._run_post_scan_janitor(job_id)
             except Exception:
                 traceback.print_exc()
 
@@ -1703,6 +1838,7 @@ class JobManager:
                 self._pipeline_sem.release()
             if job_id in self._active_jobs:
                 del self._active_jobs[job_id]
+            self._release_telemetry(job_id)
             if got_slot:
                 # Release when THIS job's pipeline slot frees, not when the
                 # queue empties. A queued job enters _active_jobs as soon as
@@ -1712,13 +1848,47 @@ class JobManager:
                 # queue. Cheap when that was 1.5 GB of medium.en; with the
                 # ~12 GB Qwen stack it left the next VOD's perception pool
                 # starved of VRAM. The semaphore guarantees no other pipeline
-                # is running here, and release_whisper_models() refuses while
+                # is running here, and release_asr_models() refuses while
                 # any transcription is still active.
                 try:
-                    from engines.caption.whisper_asr import release_asr_models
+                    from engines.caption.asr import release_asr_models
                     release_asr_models()
                 except Exception:
                     traceback.print_exc()
+
+    def _release_telemetry(self, job_id: str):
+        """Drop a terminal job's live telemetry; every scan used to leak one.
+
+        get_job falls back to the stored columns for everything it reads from
+        here that outlives the scan (timings, profile, position, duration,
+        clips found, message), and _scan_health falls back to the persisted
+        judge events. Stage timings are written once more first, because
+        the failure path never writes them and a cancel stores them before
+        finishing the stage it interrupted. The live-only values (speeds,
+        worker counts, ETA samples, download progress) mean nothing once the
+        scan has stopped and are dropped with the entry.
+        """
+        with self._telemetry_lock:
+            tel = self._telemetry.get(job_id) or {}
+            stage_timings = (
+                json.dumps(self._timings_with_detail(tel))
+                if tel.get("stage_timings") or tel.get("stage_detail") else None
+            )
+        if stage_timings is not None:
+            try:
+                with self.db.get_connection() as conn:
+                    conn.cursor().execute(
+                        "UPDATE jobs SET stage_timings = ? WHERE id = ?",
+                        (stage_timings, job_id),
+                    )
+            except Exception:
+                traceback.print_exc()
+        with self._telemetry_lock:
+            self._telemetry.pop(job_id, None)
+        # emit_event drops these on the terminal event; this also covers a run
+        # that ended without one.
+        self._last_persisted_progress.pop(job_id, None)
+        self._persisted_progress_since_trim.pop(job_id, None)
 
     def cancel_job(self, job_id: str):
         if job_id in self._active_jobs:

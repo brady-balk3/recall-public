@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "../lib/api";
+import { usePolling } from "../lib/polling";
 import { Download, RefreshCw } from "../lib/icons";
 
 type SourceStatus = {
@@ -56,21 +57,19 @@ export function useSourceRestore(sessionId: string | undefined, apiEndpoint: str
     });
   }, [enabled, sessionId, read]);
 
-  useEffect(() => {
-    if (state !== "restoring") return;
-    const timer = window.setInterval(async () => {
-      const next = await read();
-      if (!next) return;
-      if (next.local_path) setState("ready");
-      else if (next.state === "unavailable") {
-        setError(next.last_error || "Twitch wouldn't give the recording back.");
-        setState("failed");
-      } else if (next.state !== "restoring" && !next.restore_progress) {
-        setState("missing");
-      }
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [state, read]);
+  // Waits while the window is minimized and looks again the moment it's back.
+  const pollRestore = useCallback(async () => {
+    const next = await read();
+    if (!next) return;
+    if (next.local_path) setState("ready");
+    else if (next.state === "unavailable") {
+      setError(next.last_error || "Twitch wouldn't give the recording back.");
+      setState("failed");
+    } else if (next.state !== "restoring" && !next.restore_progress) {
+      setState("missing");
+    }
+  }, [read]);
+  usePolling(pollRestore, 1000, { enabled: state === "restoring" });
 
   const start = useCallback(async () => {
     if (!sessionId) return;

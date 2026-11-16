@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Brady Balk
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiUrl } from "../lib/api";
+import { usePolling } from "../lib/polling";
 import { AlertTriangle, BarChart3, Check, Clock, Film, Play, Plus, RefreshCw, RotateCcw, Scissors, Search, Settings, Sparkles, Target, Trash2, Video, X } from "../lib/icons";
 import {
   addClipToCompilationProject,
@@ -408,14 +409,16 @@ export default function StreamMemory({
     void refreshEvaluation();
   }, [apiEndpoint]);
 
+  const buildStartedAt = useRef(0);
   useEffect(() => {
-    if (!buildingConcepts) return undefined;
-    const startedAt = Date.now();
-    const timer = window.setInterval(() => {
-      setBuildElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
-    }, 1000);
-    return () => window.clearInterval(timer);
+    if (buildingConcepts) buildStartedAt.current = Date.now();
   }, [buildingConcepts]);
+  // An elapsed counter for this page only: it waits while the window is
+  // minimized and catches up when it's back.
+  const tickBuildElapsed = useCallback(() => {
+    setBuildElapsedSeconds(Math.floor((Date.now() - buildStartedAt.current) / 1000));
+  }, []);
+  usePolling(tickBuildElapsed, 1000, { enabled: buildingConcepts });
 
   const runSearch = async (searchQuery: string) => {
     const trimmed = searchQuery.trim();

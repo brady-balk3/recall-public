@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRecallHost } from "@opencut/recall/host";
+import { publishSourceFrames } from "@opencut/recall/source-frames";
+import { CutoutOverlay } from "@opencut/recall/cutout-overlay";
 import useDeepCompareEffect from "use-deep-compare-effect";
 import { useEditor } from "@opencut/editor/use-editor";
 import { useRafLoop } from "@opencut/hooks/use-raf-loop";
@@ -58,7 +60,10 @@ export function PreviewPanel({
 	overlayControls,
 	overlayInstances,
 	onOverlayVisibilityChange,
+	compact = false,
 }: {
+	/** Recall: a narrow pane beside the full frame; its controls live there. */
+	compact?: boolean;
 	overlayControls: PreviewOverlayControl[];
 	overlayInstances: PreviewOverlayInstance[];
 	onOverlayVisibilityChange: (params: {
@@ -85,6 +90,7 @@ export function PreviewPanel({
 				overlayControls={overlayControls}
 				overlayInstances={overlayInstances}
 				onOverlayVisibilityChange={onOverlayVisibilityChange}
+				compact={compact}
 			/>
 			<RenderTreeController />
 		</div>
@@ -126,7 +132,9 @@ function PreviewCanvas({
 	overlayControls,
 	overlayInstances,
 	onOverlayVisibilityChange,
+	compact,
 }: {
+	compact: boolean;
 	container: HTMLElement | null;
 	onToggleFullscreen: () => void;
 	overlayControls: PreviewOverlayControl[];
@@ -180,6 +188,15 @@ function PreviewCanvas({
 			}
 		};
 	}, [renderer]);
+
+	// Recall: the full-frame pane draws what this renderer decodes.
+	const tapSources = Boolean(useRecallHost().sourceView);
+	useEffect(() => {
+		if (!tapSources) return;
+		renderer.sourceTap = publishSourceFrames;
+		lastFrameRef.current = -1; // draw once now, so the pane isn't empty
+		return () => { renderer.sourceTap = null; };
+	}, [renderer, tapSources]);
 
 	const render = useCallback(() => {
 		if (!renderTree || renderingRef.current) return;
@@ -298,6 +315,7 @@ function PreviewCanvas({
 	}, [canPan, panByScreenDelta, scaleZoom]);
 
 	const recallOverlay = useRecallHost().previewOverlay;
+	const recallCutout = useRecallHost().cutout;
 	return (
 		<PreviewViewportProvider value={viewport}>
 			<div className="flex size-full min-h-0 min-w-0 flex-col">
@@ -322,6 +340,21 @@ function PreviewCanvas({
 											: activeProject?.settings.background.color,
 								}}
 							/>
+								{recallCutout && (
+									// Recall: the VTuber cutout, drawn over the clip like the render does.
+									<div
+										className="pointer-events-none absolute"
+										style={{
+											left: viewport.sceneLeft,
+											top: viewport.sceneTop,
+											width: viewport.sceneWidth,
+											height: viewport.sceneHeight,
+											overflow: "hidden",
+										}}
+									>
+										<CutoutOverlay cutout={recallCutout} canvasWidth={nativeWidth ?? 1080} />
+									</div>
+								)}
 								<PreviewOverlayLayer
 									instances={overlayInstances}
 									plane="under-interaction"
@@ -356,7 +389,7 @@ function PreviewCanvas({
 						/>
 					</ContextMenu>
 				</div>
-				<PreviewToolbar onToggleFullscreen={onToggleFullscreen} />
+				{!compact && <PreviewToolbar onToggleFullscreen={onToggleFullscreen} />}
 			</div>
 		</PreviewViewportProvider>
 	);

@@ -14,9 +14,9 @@ flask -- none of which belongs in a shipped desktop app. What the package
 actually does to the tensors is small, and all four pieces are already here:
 
 * mel features -- the preprocessor is literally `WhisperFeatureExtractor`
-  (128 bins, n_fft 400, hop 160, 16 kHz), so `openai-whisper`'s own
-  `log_mel_spectrogram` produces them bit for bit, including the log clamp and
-  the ``(x + 4) / 4`` scale;
+  (128 bins, n_fft 400, hop 160, 16 kHz); `log_mel_spectrogram` below is
+  whisper's transform in numpy, including the log clamp and the ``(x + 4) / 4``
+  scale;
 * tokenizer -- `tokenizers` loads the export's `tokenizer.json`;
 * inference -- `onnxruntime-gpu`, already shipped for `hsemotion-onnx`;
 * the algorithm below, reimplemented from the Apache-2.0 reference
@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import os
+from functools import lru_cache
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -50,6 +51,88 @@ AUDIO_START = "<|audio_start|>"
 AUDIO_PAD = "<|audio_pad|>"
 AUDIO_END = "<|audio_end|>"
 TIMESTAMP = "<timestamp>"
+
+# Whisper's audio front end, which the aligner's preprocessor reuses unchanged.
+SAMPLE_RATE = 16000
+N_FFT = 400
+HOP_LENGTH = 160
+N_MELS = 128
+
+
+@lru_cache(maxsize=None)
+def mel_filters(n_mels: int = N_MELS) -> np.ndarray:
+    """Slaney-scale, Slaney-normalised triangular mel filters, (n_mels, 201).
+
+    This is ``librosa.filters.mel(sr=16000, n_fft=400, n_mels=n_mels)`` with its
+    defaults (fmin 0, fmax 8 kHz, htk=False, norm="slaney"), which is how
+    openai-whisper generated the ``mel_filters.npz`` it ships. Computing them
+    here, in the same float64-then-float32 order librosa uses, is what lets
+    `openai-whisper` leave the dependency list without vendoring its asset;
+    tests/unit/test_qwen_aligner_mel.py compares the two when whisper is present.
+    """
+    f_sp = 200.0 / 3.0          # linear part: 0-1000 Hz, 66.7 Hz per mel
+    min_log_hz = 1000.0         # log part above this
+    min_log_mel = min_log_hz / f_sp
+    logstep = np.log(6.4) / 27.0
+
+    def hz_to_mel(hz: float) -> float:
+        if hz >= min_log_hz:
+            return min_log_mel + np.log(hz / min_log_hz) / logstep
+        return hz / f_sp
+
+    mels = np.linspace(hz_to_mel(0.0), hz_to_mel(SAMPLE_RATE / 2.0), n_mels + 2)
+    mel_f = f_sp * mels
+    log_part = mels >= min_log_mel
+    mel_f[log_part] = min_log_hz * np.exp(logstep * (mels[log_part] - min_log_mel))
+
+    fftfreqs = np.fft.rfftfreq(n=N_FFT, d=1.0 / SAMPLE_RATE)
+    fdiff = np.diff(mel_f)
+    ramps = np.subtract.outer(mel_f, fftfreqs)
+    weights = np.zeros((n_mels, N_FFT // 2 + 1), dtype=np.float32)
+    for i in range(n_mels):
+        lower = -ramps[i] / fdiff[i]
+        upper = ramps[i + 2] / fdiff[i + 1]
+        weights[i] = np.maximum(0, np.minimum(lower, upper))
+    # Slaney normalisation: each triangle has unit area in Hz.
+    weights *= (2.0 / (mel_f[2:n_mels + 2] - mel_f[:n_mels]))[:, np.newaxis]
+    weights.setflags(write=False)  # cached and shared by every call
+    return weights
+
+
+def log_mel_spectrogram(audio: np.ndarray, n_mels: int = N_MELS) -> np.ndarray:
+    """Whisper's log-mel of mono 16 kHz audio, as float32 (n_mels, len // 160).
+
+    The steps match ``whisper.audio.log_mel_spectrogram``: ``torch.stft`` with a
+    periodic Hann window, centred with reflect padding, power spectrum with the
+    last frame dropped, the mel projection, ``log10`` clamped at 1e-10, a floor
+    8 below the clip's maximum, and ``(x + 4) / 4``. The aligner's features
+    come from here, so a change in any step moves every word time.
+    """
+    audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+    pad = N_FFT // 2
+    # torch's reflect padding cannot pad by more than the input is long; whisper
+    # raises on such audio, and so does this rather than invent a frame.
+    if audio.size <= pad:
+        raise ValueError(
+            f"{audio.size} samples is too short for a {N_FFT}-sample window")
+    padded = np.pad(audio, pad, mode="reflect")
+    frames = 1 + (padded.size - N_FFT) // HOP_LENGTH
+    framed = np.lib.stride_tricks.as_strided(
+        padded, shape=(frames, N_FFT),
+        strides=(padded.strides[0] * HOP_LENGTH, padded.strides[0]))
+    # torch.hann_window's default is the periodic window (denominator N, not N-1).
+    window = (0.5 - 0.5 * np.cos(2.0 * np.pi * np.arange(N_FFT) / N_FFT)).astype(np.float32)
+    # scipy's FFT keeps float32 in float32, like torch.stft, and measured about
+    # 4x faster than numpy.fft on 60 s of audio.
+    from scipy import fft as sp_fft
+    spectrum = sp_fft.rfft(framed * window, n=N_FFT, axis=-1)
+    magnitudes = (np.abs(spectrum[:-1]) ** 2).T.astype(np.float32)
+
+    mel_spec = mel_filters(n_mels) @ magnitudes
+    log_spec = np.log10(np.maximum(mel_spec, 1e-10))
+    log_spec = np.maximum(log_spec, log_spec.max() - 8.0)
+    log_spec = (log_spec + 4.0) / 4.0
+    return np.ascontiguousarray(log_spec, dtype=np.float32)
 
 
 def audio_token_count(mel_frames: int) -> int:
@@ -301,10 +384,7 @@ class QwenForcedAligner:
         return self.max_frames * self.frame_ms / 1000.0
 
     def _mel(self, audio: np.ndarray) -> np.ndarray:
-        from whisper.audio import log_mel_spectrogram
-
-        mel = log_mel_spectrogram(audio.astype(np.float32), n_mels=128)
-        return np.ascontiguousarray(mel.numpy(), dtype=np.float32)
+        return log_mel_spectrogram(audio, n_mels=N_MELS)
 
     def _build_ids(self, words: Sequence[str], n_audio: int) -> np.ndarray:
         ids: List[int] = [self._special[AUDIO_START]]

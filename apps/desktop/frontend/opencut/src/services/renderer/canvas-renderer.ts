@@ -4,6 +4,7 @@ import { createCanvasSurface } from "./canvas-utils";
 import { buildFrameDescriptor } from "./compositor/frame-descriptor";
 import { wasmCompositor } from "./compositor/wasm-compositor";
 import { resolveRenderTree } from "./resolve";
+import type { SourceFrame } from "@opencut/recall/source-frames";
 import {
 	measureSpanAsync,
 	measureSpanSync,
@@ -22,6 +23,13 @@ export class CanvasRenderer {
 	width: number;
 	height: number;
 	fps: FrameRate;
+	/**
+	 * Recall: told every frame's decoded sources, whole (the Cutting Room's
+	 * full-frame pane). Only the preview sets it; exports never do.
+	 */
+	sourceTap: ((frames: SourceFrame[]) => void) | null = null;
+	/** Filled while a frame resolves, when `sourceTap` is set. */
+	tappedSources: SourceFrame[] | null = null;
 
 	constructor({ width, height, fps }: CanvasRendererParams) {
 		this.width = width;
@@ -51,10 +59,15 @@ export class CanvasRenderer {
 	}
 
 	async render({ node, time }: { node: AnyBaseNode; time: number }) {
+		const tap = this.sourceTap;
+		this.tappedSources = tap ? [] : null;
 		await measureSpanAsync({
 			name: "resolve",
 			fn: () => resolveRenderTree({ node, renderer: this, time }),
 		});
+		const tapped = this.tappedSources;
+		this.tappedSources = null;
+		if (tap && tapped) tap(tapped);
 		const { frame, textures } = await measureSpanAsync({
 			name: "buildFrame",
 			fn: () => buildFrameDescriptor({ node, renderer: this }),

@@ -1,0 +1,10 @@
+anime-segmentation ISNet (isnetis.onnx)
+Attribution: SkyTNT/anime-segmentation
+Source: https://huggingface.co/skytnt/anime-seg (weights), https://github.com/SkyTNT/anime-segmentation (code)
+License: Apache-2.0 (notices/Apache-2.0.txt). The maintainer confirmed the weights are Apache-2.0:
+https://huggingface.co/skytnt/anime-seg/discussions/4
+Bundled file SHA-256 identities:
+vision/isnetis.onnx f15622d853e8260172812b657053460e20806f04b9e05147d49af7bed31a6e99
+Recall modifications: none; the upstream bytes are used as published.
+Used for: the VTuber cutout (engines/vision/avatar_matting.py).
+No endorsement by upstream creators is implied.

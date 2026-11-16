@@ -3,8 +3,10 @@
 import os
 import sys
 import math
+import contextlib
 import uuid
 import hashlib
+import threading
 import traceback
 import time
 from types import SimpleNamespace
@@ -42,12 +44,25 @@ from engines.clip.layout import assign_layout, resolve_export_layout
 from engines.audio.prosody import extract_prosody
 from engines.audio.asr_hype import load_lexicon, build_hype_track
 from engines.audio.audio_events import analyze_audio_events, audio_events_available
-from engines.caption.vod_transcribe import transcribe_vod, transcribe_vod_regions
-from engines.caption.whisper_asr import (
+from engines.caption.vod_transcribe import (
+    SPEECH_REGIONS_CACHE_VERSION,
+    detect_speech_regions,
+    speech_regions_cache_entry,
+    speech_regions_from_cache,
+    transcribe_vod,
+    transcribe_vod_regions,
+)
+from engines.caption.streamer_voice import (
+    StreamerVoice,
+    build_streamer_voice,
+    cache_name as streamer_voice_cache_name,
+)
+from engines.caption import voice_profile as voice_profile_mod
+from engines.caption.asr import (
     asr_cache_label,
     asr_display_name,
     release_asr_models,
-    resolve_whisper_size,
+    resolve_asr_model_size,
 )
 from engines.emotion.face_emotion import analyze_faces, scorer_cache_label as face_scorer_label
 from engines.chat import twitch_chat
@@ -97,7 +112,7 @@ FAST_SCOUT_OCR_STRIDE = 6  # selected Smart Scan regions refine at stride 1
 
 
 def _asr_progress_reporter(emit, start_progress: float, end_progress: float):
-    """Translate faster-whisper segment progress into honest job telemetry.
+    """Translate the ASR's chunk progress into honest job telemetry.
 
     Segment callbacks can be frequent, so events are limited to roughly one
     every two seconds. The final callback always emits. ETA is based only on
@@ -349,7 +364,8 @@ def _sequential_perceive(video_path, duration, settings, pipeline_settings, audi
             ocr=ocr_signal, vision=vision_signal,
         ))
         progress_val = 0.15 + (0.25 * (timestamp / max(1.0, duration)))
-        emit("Perception", f"Processed timestamp {timestamp:.1f}s", min(0.4, progress_val))
+        emit("Perception", f"Processed timestamp {timestamp:.1f}s", min(0.4, progress_val),
+             telemetry={"scanned_seconds": round(float(timestamp), 1)})
     return unified_signals
 
 def emit_progress(phase: str, message: str, progress: float, callback=None, telemetry=None):
@@ -362,10 +378,676 @@ def emit_progress(phase: str, message: str, progress: float, callback=None, tele
         # Fallback print if no callback is provided
         print(f"[{phase}] {message} ({progress*100:.1f}%)")
 
-def _extract_analysis_audio(video_path: str, wav_path: str, duration: float, emit=None):
+
+def _monotonic_emitter(callback=None):
+    """An emit for one run_pipeline call whose progress number never goes back.
+
+    The job manager samples every emitted value into the ETA model, and stage
+    constants that drifted out of execution order made a real scan report
+    0.64 -> 0.57 -> 0.65 -> 0.64 inside Reaction. The constants are ordered
+    now; this is the backstop so a later edit cannot reintroduce it. Only the
+    number is held: phase, message and telemetry always pass through, so a
+    stage change or a new status line is never hidden.
+
+    The lock is held across the callback because preview export reports from
+    a thread pool: without it two renders could pass the check in one order
+    and reach the job manager in the other.
+    """
+    lock = threading.RLock()
+    highest = [None]
+
+    def emit(phase, message, progress, telemetry=None):
+        with lock:
+            try:
+                value = float(progress)
+            except (TypeError, ValueError):
+                value = None
+            if value is not None and math.isfinite(value):
+                if highest[0] is not None and value < highest[0]:
+                    progress = highest[0]
+                else:
+                    highest[0] = value
+            emit_progress(phase, message, progress, callback, telemetry=telemetry)
+
+    return emit
+
+
+def _rescaled_emit(emit, source, target):
+    """Pass progress in ``source`` through ``emit`` mapped linearly onto ``target``.
+
+    perceive_regions reports a fixed 0.45-0.57 range. That range is right for
+    neither of its callers: Smart scan refines after the speech scout, and the
+    whole-VOD pass refills coverage gaps before Event begins at 0.45. Values
+    outside ``source`` pass through unchanged.
+    """
+    source_low, source_high = source
+    target_low, target_high = target
+
+    def rescaled(phase, message, progress, telemetry=None):
+        try:
+            value = float(progress)
+        except (TypeError, ValueError):
+            value = None
+        if value is not None and source_low <= value <= source_high:
+            fraction = (value - source_low) / (source_high - source_low)
+            progress = target_low + fraction * (target_high - target_low)
+        emit(phase, message, progress, telemetry)
+
+    return rescaled
+
+
+class _SubstageClock:
+    """Seconds and call counts for the named steps inside a scan's stages.
+
+    The job manager times whole stages and nothing finer, and Reaction is
+    55-60% of a scan: its breakdown had to be rebuilt by hand from event
+    timestamps. ``span`` times one step and accumulates, because the judge
+    callbacks run inside build_reaction_clips once per shared-coverage round.
+    A step's seconds exclude steps timed inside it on the same thread, so the
+    steps of a stage add up to its wall time without double counting: "asr"
+    excludes its speech detection, and "selection" is build_reaction_clips
+    less the judges it called. ``lap`` times straight-line code between two
+    readings without re-indenting it, and must not span a timed step.
+
+    The breakdown rides to the job manager as ``stage_detail`` on the next
+    progress report (``attach``). Accounting never raises into the scan; a span
+    costs two perf_counter reads and a dict update under a lock.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._local = threading.local()
+        self._stages = {}
+        self._version = 0
+        self._sent = 0
+
+    @contextlib.contextmanager
+    def span(self, stage, name, overlapped=None):
+        frame = [0.0]
+        started = time.perf_counter()
+        stack = None
+        try:
+            stack = self._local.__dict__.setdefault("stack", [])
+            stack.append(frame)
+        except Exception:  # noqa: BLE001 - timing never fails a scan
+            stack = None
+        try:
+            yield
+        finally:
+            try:
+                total = time.perf_counter() - started
+                if stack is not None:
+                    stack.pop()
+                self.add(stage, name, total - frame[0], overlapped=overlapped,
+                         charge=total)
+            except Exception:  # noqa: BLE001 - timing never fails a scan
+                pass
+
+    def add(self, stage, name, seconds, overlapped=None, charge=None):
+        """Count one run of ``name``, and take ``charge`` (default
+        ``seconds``) off the span enclosing it on this thread.
+
+        ``overlapped`` names the stage a background step ran beside, so its
+        seconds are not read as the wall time of the stage it is listed under.
+        """
+        try:
+            stack = self._local.__dict__.get("stack")
+            if stack:
+                stack[-1][0] += max(0.0, float(seconds if charge is None else charge))
+            with self._lock:
+                entry = self._stages.setdefault(stage, {}).setdefault(
+                    "substages", {}).setdefault(name, {"seconds": 0.0, "calls": 0})
+                entry["seconds"] += max(0.0, float(seconds))
+                entry["calls"] += 1
+                if overlapped:
+                    entry["overlapped"] = overlapped
+                self._version += 1
+        except Exception:  # noqa: BLE001 - timing never fails a scan
+            pass
+
+    def lap(self, stage, name, started):
+        """Count the time since ``started`` (a perf_counter reading) as one run
+        of ``name``, and return a fresh reading for the next lap."""
+        now = time.perf_counter()
+        self.add(stage, name, now - started)
+        return now
+
+    def set_detail(self, stage, field, value):
+        try:
+            with self._lock:
+                self._stages.setdefault(stage, {})[field] = value
+                self._version += 1
+        except Exception:  # noqa: BLE001 - timing never fails a scan
+            pass
+
+    def step_timer(self, stage):
+        """``name -> span`` for code outside this module (the ASR adapter)."""
+        return lambda name: self.span(stage, name)
+
+    def snapshot(self):
+        """A fresh copy, safe to hand to another thread."""
+        with self._lock:
+            out = {}
+            for stage, fields in self._stages.items():
+                copy = {}
+                for field, value in fields.items():
+                    if field == "substages":
+                        copy[field] = {
+                            name: {**entry, "seconds": round(entry["seconds"], 2)}
+                            for name, entry in value.items()
+                        }
+                    elif isinstance(value, list):
+                        copy[field] = [dict(item) if isinstance(item, dict) else item
+                                       for item in value]
+                    else:
+                        copy[field] = value
+                out[stage] = copy
+            return out
+
+    def attach(self, emit):
+        """Wrap ``emit`` so a report carries the breakdown whenever it changed.
+
+        Each carries the whole cumulative breakdown, which the job manager
+        stores as it is, so nothing depends on any one report arriving. A step
+        finished after the last report of a failed or cancelled scan is lost.
+        """
+        def emit_with_detail(phase, message, progress, telemetry=None):
+            detail = None
+            version = 0
+            try:
+                with self._lock:
+                    version = self._version
+                    changed = version != self._sent
+                if changed:
+                    detail = self.snapshot()
+            except Exception:  # noqa: BLE001 - timing never fails a scan
+                detail = None
+            if detail:
+                telemetry = dict(telemetry or {})
+                merged = dict(telemetry.get("stage_detail") or {})
+                for stage, fields in detail.items():
+                    merged[stage] = {**fields, **(merged.get(stage) or {})}
+                telemetry["stage_detail"] = merged
+            emit(phase, message, progress, telemetry)
+            if detail:
+                with self._lock:
+                    self._sent = max(self._sent, version)
+
+        return emit_with_detail
+
+
+def _lower_thread_priority():
+    """Best-effort: drop the calling thread to THREAD_PRIORITY_LOWEST.
+
+    Perception's workers run in a BELOW_NORMAL process at normal thread
+    priority (base 6). LOWEST in this NORMAL-class process is also 6, so an
+    early step shares the CPU with them as an equal instead of preempting
+    them. Windows only; elsewhere the thread keeps its priority.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentThread.restype = wintypes.HANDLE
+        kernel32.SetThreadPriority.argtypes = [wintypes.HANDLE, ctypes.c_int]
+        kernel32.SetThreadPriority.restype = wintypes.BOOL
+        kernel32.SetThreadPriority(kernel32.GetCurrentThread(), -2)
+    except Exception:  # noqa: BLE001 - priority is a courtesy, never a failure
+        pass
+
+
+class _EarlyStep:
+    def __init__(self, name, fn):
+        self.name = name
+        self.fn = fn
+        self.claimed = False
+        self.queued = False
+        self.value = None
+        self.error = None
+        self.done = threading.Event()
+
+
+class _EarlyWork:
+    """Steps that need only the source URL or the analysis WAV, started before
+    Perception so they overlap it instead of queuing behind it.
+
+    Each step runs once, claimed by whichever gets to it first: its background
+    thread, or _reaction_select, which then runs it inline as it always did
+    (a cached-Perception scan starts no audio thread at all). ``result`` hands
+    back the value or raises the step's own error at the point the step used
+    to run, so each caller keeps its failure handling: an optional channel
+    prints and drops, prosody still fails the scan, InterruptedError cancels.
+
+    Background steps never emit progress. A Reaction number reported during
+    Perception would pin the monotonic emitter above the Perception range for
+    the rest of that stage. Their timings go to the clock, marked with the
+    stage they overlapped, and any time Reaction still waits for one is
+    "background_wait". ``close`` stops and joins the threads; run_pipeline
+    calls it before storage.cleanup_temp, whose temp_dir the chat fetches
+    write into, so nothing outlives the scan.
+    """
+
+    # Every step checks for the stop between blocks of at most a few seconds
+    # (VAD per 600s block, tagger per batch, chat CLI every 0.5s, the
+    # streamer-voice map every 50 windows, ~3s); prosody, ~2.4s per VOD-hour,
+    # is the longest that cannot be interrupted, with the map's detector
+    # training and inference next (8.3s wall for a 4.3-hour VOD).
+    JOIN_SECONDS = 60.0
+
+    def __init__(self, clock, cancel_check=None):
+        self._clock = clock
+        self._cancel_check = cancel_check
+        self._stop = threading.Event()
+        self._lock = threading.Lock()
+        self._steps = {}
+        self._threads = []
+
+    def add(self, name, fn):
+        """Register ``fn(check)``; ``check()`` raises InterruptedError once the
+        scan is cancelled or over. A name already registered is kept."""
+        with self._lock:
+            self._steps.setdefault(name, _EarlyStep(name, fn))
+
+    def has(self, name):
+        return name in self._steps
+
+    def finished(self, name):
+        step = self._steps.get(name)
+        return bool(step and step.done.is_set())
+
+    def _check(self):
+        if self._stop.is_set():
+            raise InterruptedError("Scan ended before this step finished")
+        if self._cancel_check:
+            self._cancel_check()
+
+    def start(self, names, low_priority=False, overlapped="Perception"):
+        """Run ``names`` one after another on one new thread. Names already
+        started, or not registered, are skipped."""
+        with self._lock:
+            steps = [self._steps[name] for name in names
+                     if name in self._steps and not self._steps[name].queued]
+            for step in steps:
+                step.queued = True
+        if not steps:
+            return
+        thread = threading.Thread(
+            target=self._run_queue, args=(steps, low_priority, overlapped),
+            name="recall-early-" + "+".join(step.name for step in steps), daemon=True,
+        )
+        self._threads.append(thread)
+        thread.start()
+
+    def _claim(self, step):
+        with self._lock:
+            if step.claimed:
+                return False
+            step.claimed = True
+            return True
+
+    def _run_queue(self, steps, low_priority, overlapped):
+        if low_priority:
+            _lower_thread_priority()
+        for step in steps:
+            if self._stop.is_set():
+                return
+            if self._claim(step):
+                self._run(step, overlapped)
+
+    def _run(self, step, overlapped=None):
+        started = time.perf_counter()
+        try:
+            step.value = step.fn(self._check)
+        except BaseException as exc:  # noqa: BLE001 - raised again by result()
+            step.error = exc
+        finally:
+            self._clock.add("Reaction", step.name, time.perf_counter() - started,
+                            overlapped=overlapped)
+            step.done.set()
+
+    def result(self, name, wait_stage="Reaction"):
+        """``wait_stage`` lists any wait under the stage that waited (the
+        caption filter's map is collected by Caption, not Reaction); None
+        records none, for a step waiting on another inside its own timing."""
+        step = self._steps[name]
+        if self._claim(step):
+            self._run(step)
+        elif not step.done.is_set():
+            waited = time.perf_counter()
+            try:
+                while not step.done.wait(0.25):
+                    if self._cancel_check:
+                        self._cancel_check()
+            finally:
+                if wait_stage:
+                    self._clock.add(wait_stage, "background_wait", time.perf_counter() - waited)
+        if step.error is not None:
+            raise step.error
+        return step.value
+
+    def close(self):
+        self._stop.set()
+        for thread in self._threads:
+            thread.join(self.JOIN_SECONDS)
+            if thread.is_alive():
+                print(f"Background scan step still running after the scan ended: {thread.name}")
+
+
+def _events_cache_path(storage, video_hash):
+    # _v3: adds model-independent sudden-loudness onsets for startles
+    # (v2 added game_intensity). Old caches decode safely via defaults,
+    # but would silently leave the new channel dark, so retire them.
+    return os.path.join(storage.cache_dir, f"{video_hash}_events_v3{signal_cache.CACHE_EXT}")
+
+
+def _chat_cache_path(storage, video_path):
+    return os.path.join(
+        storage.cache_dir,
+        f"{_audio_cache_key(video_path)}_chat_evidence_v1{signal_cache.CACHE_EXT}",
+    )
+
+
+def _speech_regions_cache_path(storage, video_path):
+    # Keyed like the WAV and the transcript: the regions depend only on the
+    # source's audio, never on scan settings.
+    return os.path.join(
+        storage.cache_dir,
+        f"{_audio_cache_key(video_path)}_speech_regions_v{SPEECH_REGIONS_CACHE_VERSION}"
+        f"{signal_cache.CACHE_EXT}",
+    )
+
+
+def _find_speech_regions(regions_cache, wav_path, check):
+    """The VAD's speech regions, from the cache or from a fresh pass.
+
+    Cached so a re-scan whose transcript was lost but whose regions survive
+    the storage janitor does not run the VAD again (~11s per VOD-hour). A
+    failed write only costs that reuse, never the regions this scan needs.
+    """
+    regions = speech_regions_from_cache(_cache_load(regions_cache))
+    if regions is None:
+        regions = detect_speech_regions(wav_path, cancel_check=check)
+        try:
+            signal_cache.save(regions_cache, speech_regions_cache_entry(regions))
+        except Exception as exc:  # noqa: BLE001 - the cache is an optimisation
+            print(f"Speech regions not cached: {exc}")
+    return regions
+
+
+def _streamer_voice_cache_path(storage, video_path):
+    # Audio-keyed like the speech regions: the storage janitor attributes it
+    # to its source and keeps it with the scan results (core.storage_lifecycle).
+    return os.path.join(
+        storage.cache_dir,
+        streamer_voice_cache_name(_audio_cache_key(video_path), signal_cache.CACHE_EXT),
+    )
+
+
+def _voice_profile_root(storage):
+    """The data root the streamer voice profiles live under (beside cache/)."""
+    return getattr(storage, "base_dir", None) or os.path.dirname(os.path.abspath(storage.cache_dir))
+
+
+def _vod_streamer(early, settings):
+    """The channel the VOD belongs to: Twitch's own metadata, else what the job
+    already knew. A local recording has none and is filtered per VOD only."""
+    if early.has("twitch_metadata"):
+        try:
+            meta = early.result("twitch_metadata", wait_stage=None)
+        except InterruptedError:
+            raise
+        except Exception:  # noqa: BLE001 - metadata is best-effort
+            meta = None
+        if (meta or {}).get("streamer"):
+            return meta["streamer"]
+    return settings.get("streamer") or None
+
+
+def _build_streamer_voice(early, storage, video_path, wav_path, settings, check):
+    """The streamer-voice map captions filter on (engines.caption.streamer_voice).
+
+    Cached by the audio key, so a re-scan or a later render reads it back.
+    The speech regions are the scan's own: the VAD step's when it ran, else
+    the regions cache, so a scan never runs the VAD twice. A failure leaves no
+    map and every caption word in place; it never fails the scan.
+    """
+    voice_cache = _streamer_voice_cache_path(storage, video_path)
+    voice = StreamerVoice.from_cache(_cache_load(voice_cache))
+    if voice is not None:
+        return voice
+    check()
+    if early.has("speech_detection"):
+        # Queued ahead of this step on the same thread, or already run inline
+        # by Reaction's ASR: either way finished, or about to be.
+        regions = early.result("speech_detection", wait_stage=None)
+    else:
+        regions = _find_speech_regions(_speech_regions_cache_path(storage, video_path), wav_path, check)
+    streamer = _vod_streamer(early, settings)
+    root = _voice_profile_root(storage)
+    profile = voice_profile_mod.load_profile(root, streamer) if streamer else None
+    voice = build_streamer_voice(wav_path, regions, cancel_check=check, profile=profile)
+    if voice is None:
+        print("Streamer-only captions: no voice map (no speech could be embedded); "
+              "captions stay unfiltered.")
+        return None
+    try:
+        signal_cache.save(voice_cache, voice.to_cache())
+    except Exception as exc:  # noqa: BLE001 - the cache is an optimisation
+        print(f"Streamer voice map not cached: {exc}")
+    if streamer:
+        try:
+            outcome = voice_profile_mod.update_profile(
+                root, streamer, _audio_cache_key(video_path), voice)
+            print(f"Streamer voice profile: {outcome}")
+        except Exception as exc:  # noqa: BLE001 - the profile is an optimisation
+            print(f"Streamer voice profile not updated: {exc}")
+    return voice
+
+
+def _collect_streamer_voice(early, clock, emit=None):
+    """The map for this scan's captions, waiting for it if it is still
+    building. None (captions unfiltered) when the setting is off, the step
+    failed, or nothing could be built. A cancel still cancels."""
+    if early is None or not early.has("streamer_voice"):
+        return None
+    if emit and not early.finished("streamer_voice"):
+        emit("Caption", "Picking out your voice from the rest of the stream...", 0.75)
+    try:
+        voice = early.result("streamer_voice", wait_stage="Caption")
+    except InterruptedError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - captions just stay unfiltered
+        print(f"Streamer-only captions skipped: {exc}")
+        return None
+    if voice is None:
+        return None
+    summary = voice.summary()
+    clock.set_detail("Caption", "streamer_voice", summary)
+    print(f"Streamer-only captions {'ON' if voice.active else 'off'} for this VOD: {summary}")
+    return voice
+
+
+def _tag_audio_events(ev_cache, wav_path, duration, check):
+    frames = _cache_load(ev_cache)
+    if frames is None:
+        check()
+        frames = analyze_audio_events(wav_path, duration=duration, cancel_check=check)
+        signal_cache.save(ev_cache, frames)
+    return frames
+
+
+def _read_full_chat(chat_cache, source_url, duration, storage, check):
+    """(track or None, evidence) from the cache, or from a fresh fetch.
+
+    Only a complete fetch is cached. A timed-out or failed one used to be saved
+    as an empty chat, and every later scan of the VOD trusted it and never
+    asked again. An empty track cached before ``complete`` existed cannot be
+    told from a failure, so it is fetched once more; a non-empty one came from
+    a fetch that finished (fetch_twitch_chat returns nothing partial).
+    """
+    cached = _cache_load(chat_cache)
+    if isinstance(cached, dict) and "track" in cached and (
+        cached.get("track") or cached.get("complete")
+    ):
+        return cached.get("track") or None, cached.get("evidence")
+    messages = twitch_chat.fetch_twitch_chat(
+        source_url, cancel_check=check, temp_dir=storage.temp_dir,
+    )
+    if messages is None:
+        # No answer about this VOD's chat (no CLI, a timeout, a failed
+        # download): scan without it, and try again next time.
+        return None, None
+    track = build_chat_track(messages, duration) if messages else []
+    evidence = (
+        build_chat_evidence(messages, duration, source_scope="full_vod")
+        if messages else None
+    )
+    signal_cache.save(chat_cache, {
+        "track": track,
+        "evidence": evidence,
+        "complete": True,
+    })
+    return track or None, evidence
+
+
+def _record_cache_index(storage, video_path, **keys):
+    """List this scan's settings-dependent cache keys in the source's index
+    (core.cache_keys), so the storage janitor keeps those files for as long as
+    the source is on disk. Best-effort: a failure only leaves them unlisted,
+    and an unlisted file is evicted first, as before."""
+    try:
+        cache_keys.record_cache_index(storage.cache_dir, _audio_cache_key(video_path), **keys)
+    except Exception as exc:  # noqa: BLE001 - never fail a scan over the index
+        print(f"Cache index not updated: {exc}")
+
+
+class _IndexedVerdictCache(visual_judge_mod.VisualVerdictCache):
+    """The judges' verdict cache, remembering every key this scan reads or
+    writes so _reaction_select can list them in the source's index. Verdict
+    keys are hashes of the candidate window and cannot be rebuilt later."""
+
+    def __init__(self, cache_dir=None):
+        super().__init__(cache_dir)
+        self.keys = set()
+        self._keys_lock = threading.Lock()
+
+    def load(self, key):
+        value = super().load(key)
+        if value is not None:
+            with self._keys_lock:
+                self.keys.add(key)
+        return value
+
+    def save(self, key, value):
+        super().save(key, value)
+        with self._keys_lock:
+            self.keys.add(key)
+
+
+def _plan_early_work(early, video_path, wav_path, duration, settings, pipeline_settings,
+                     storage, video_hash):
+    """Register the steps this scan will use that need only the source URL or
+    the analysis WAV. Returns (network, audio): the names for each thread.
+
+    Only what the mode uses: Smart scan reads chat per region and its speech
+    scout runs the VAD per region, so it registers neither the full chat nor
+    the VOD-wide VAD. The VAD is skipped too when a transcript is cached,
+    since ASR will not run. MEASURED 2026-11-10 on 25-minute excerpts with the
+    thread bounds in place, seconds wall / CPU per VOD-hour: prosody 2.4 / 2.4,
+    audio events 3.5 / 6.7, VAD 10.8 / 10.1; the metadata probe is ~1s and the
+    full chat fetch took 3-7s in the last ten scans.
+    """
+    fast_mode = pipeline_settings.get("processing_mode") == "fast"
+    source_url = settings.get("source_url", "")
+    network, audio = [], []
+    if twitch_chat.is_twitch_vod(source_url) and twitch_chat.chat_available():
+        early.add("twitch_metadata", lambda check: twitch_chat.fetch_twitch_video_meta(
+            source_url, cancel_check=check, temp_dir=storage.temp_dir,
+        ))
+        network.append("twitch_metadata")
+        if not fast_mode:
+            chat_cache = _chat_cache_path(storage, video_path)
+            early.add("chat_fetch", lambda check: _read_full_chat(
+                chat_cache, source_url, duration, storage, check,
+            ))
+            network.append("chat_fetch")
+
+    def prosody(check):
+        check()
+        return extract_prosody(wav_path)
+
+    early.add("prosody", prosody)
+    audio.append("prosody")
+    if audio_events_available():
+        ev_cache = _events_cache_path(storage, video_hash)
+        early.add("audio_events", lambda check: _tag_audio_events(
+            ev_cache, wav_path, duration, check,
+        ))
+        audio.append("audio_events")
+    if not fast_mode:
+        tr_cache = _transcript_cache_path(
+            storage, _audio_cache_key(video_path), resolve_asr_model_size(settings),
+            settings=settings,
+        )
+        if not os.path.exists(tr_cache):
+            regions_cache = _speech_regions_cache_path(storage, video_path)
+            early.add("speech_detection", lambda check: _find_speech_regions(
+                regions_cache, wav_path, check,
+            ))
+            audio.append("speech_detection")
+    # Streamer-only captions (Settings, default on). Smart scan gets it too:
+    # its captions come from the same per-clip decode, and the VOD-wide VAD
+    # it then needs (~11 CPU-s per VOD-hour, none when the regions are
+    # cached) runs on this thread beside Perception. Listed after the VAD so
+    # it reads that step's regions. MEASURED 2026-11-15 on five VODs: 54-106
+    # CPU-s per VOD-hour on one core, nearly all speaker embeddings, and a
+    # ~260 KB cache entry for a four-hour VOD (see streamer_voice).
+    if settings.get("captionStreamerOnly", True) is not False:
+        early.add("streamer_voice", lambda check: _build_streamer_voice(
+            early, storage, video_path, wav_path, settings, check,
+        ))
+        audio.append("streamer_voice")
+    return network, audio
+
+
+# Peak memory of the steps that load the whole WAV, MEASURED 2026-11-10 in a
+# fresh process on a 25-minute excerpt: extract_prosody and
+# analyze_audio_events each peaked ~230 MB over baseline (the float32 WAV, and
+# the tagger's window matrix), i.e. ~0.55 GB per VOD-hour. The VAD reads 600s
+# blocks and peaked under 0.2 GB, whatever the length.
+WHOLE_WAV_GB_PER_HOUR = 0.55
+
+
+def _early_audio_steps(names, duration):
+    """The audio steps that may run beside Perception on this VOD.
+
+    Perception's workers are sized to leave the governor's RESERVE_GB of RAM
+    free. A whole-WAV step may take half of that; on a longer VOD (past ~3.6
+    hours at the default 4 GB) prosody and the tagger wait for Perception to
+    finish, as they always did, and only the VAD and the streamer-voice map go
+    early: both read the WAV a block at a time (the map memory-maps it and
+    holds a float16 log-mel, 17 MB per VOD-hour).
+    """
+    try:
+        from core.process_governor import RESERVE_GB
+    except Exception:  # noqa: BLE001 - governor unavailable: assume its default
+        RESERVE_GB = 4.0
+    if duration / 3600.0 * WHOLE_WAV_GB_PER_HOUR <= RESERVE_GB / 2.0:
+        return list(names)
+    return [name for name in names if name not in ("prosody", "audio_events")]
+
+
+def _extract_analysis_audio(video_path: str, wav_path: str, duration: float, emit=None,
+                            progress: float = 0.1):
     """Extract the analysis WAV, routing multitrack recordings to the mic-most
     stream (plan 22 §4.4). Selection is deterministic per file and entirely
-    best-effort — any probe failure falls back to the default mix."""
+    best-effort — any probe failure falls back to the default mix.
+
+    ``progress`` is the caller's, because this runs both in Perception and,
+    when Perception came from the signal cache, again inside Reaction."""
     if os.path.exists(wav_path):
         return
     from engines.audio.audio_tracks import select_mic_track
@@ -377,7 +1059,7 @@ def _extract_analysis_audio(video_path: str, wav_path: str, duration: float, emi
     if track is not None and emit:
         emit("Perception",
              f"Multitrack recording: using audio track {track + 1} (mic) for reaction analysis.",
-             0.09)
+             progress)
     extract_audio(video_path, output_path=wav_path, audio_track=track)
 
 
@@ -589,6 +1271,21 @@ def _auto_clip_count(duration: float, aggressiveness: float) -> int:
     return auto_clip_count(duration, aggressiveness)
 
 
+def _video_fps(video_info: dict) -> float:
+    """Frame rate from extract_metadata, 30 when OpenCV could not read one.
+
+    extract_metadata returns ``fps`` as a float. This used to read ffprobe's
+    ``r_frame_rate`` string, a key that dict never has, so every VOD reported
+    30, including 60 fps Twitch VODs. The value is display-only: it feeds the
+    "Video metadata" progress line, which carries the duration as telemetry.
+    """
+    try:
+        fps = float(video_info.get("fps") or 0.0)
+    except (TypeError, ValueError):
+        return 30.0
+    return fps if math.isfinite(fps) and fps > 0 else 30.0
+
+
 def _audio_cache_key(video_path: str) -> str:
     """Content-only key for extracted audio (plan 5.3) — see core.cache_keys.
     Shared with the API service so both sides derive identical paths."""
@@ -741,7 +1438,11 @@ class _SpeechLaneStream:
         self.interval = interval
         self.words = [0.0] * LANE_BINS
         self.until = 0.0
-        self.last_sent = 0.0
+        # None until the first send, so the first batch always goes. A 0.0
+        # start compared against time.monotonic(), whose zero is undefined
+        # (about boot time on Windows), held it back whenever the machine had
+        # been up for less than ``interval``.
+        self.last_sent = None
 
     def __call__(self, words):
         if not self.event_callback or self.duration <= 0:
@@ -755,7 +1456,7 @@ class _SpeechLaneStream:
             self.words[idx] += 1.0
             self.until = max(self.until, float(_field(word, "end", t) or t))
         now = time.monotonic()
-        if now - self.last_sent < self.interval:
+        if self.last_sent is not None and now - self.last_sent < self.interval:
             return
         self.last_sent = now
         speech = _normalize_speech(self.words)
@@ -924,7 +1625,7 @@ def _report_visual_judge_health(
 def _reaction_select(video_path, unified_signals, duration, settings,
                      pipeline_settings, storage, video_hash, emit, audio_signals=None,
                      cancel_check=None, framing_callback=None, event_callback=None,
-                     timeline_callback=None):
+                     timeline_callback=None, clock=None, early=None):
     """Reaction Highlight Engine selection path.
 
     Returns (stories, clips, transcript, timeline) where timeline is the
@@ -934,15 +1635,26 @@ def _reaction_select(video_path, unified_signals, duration, settings,
     hype + game evidence), selects clips via the reaction engine (optionally a
     learned ranker), and adapts the output to the legacy (stories, clips) contract
     with synthetic stories so caption/export/job_manager stay unchanged.
+
+    ``clock`` (a _SubstageClock) receives the step timings, listed under
+    "Reaction" although the steps before its first message report under Event.
+    ``early`` (an _EarlyWork) holds the steps run_pipeline may have started
+    during Perception; whatever it did not start runs here, inline.
     """
+    clock = clock or _SubstageClock()
+    early = early or _EarlyWork(clock, cancel_check)
+    wav_path = os.path.join(storage.cache_dir, f"{_audio_cache_key(video_path)}_audio.wav")
+    _plan_early_work(early, video_path, wav_path, duration, settings, pipeline_settings,
+                     storage, video_hash)
     # Layout inference (layout-agnostic pass 1): find chat/alert overlay
     # regions from the OCR entry boxes already captured, then annotate every
     # OCR signal with spatially routed "gameplay_text". Game detection, OCR
     # event triggers, and scene classification all prefer the routed text, so
     # on-screen chat / alert widgets can't fire game triggers or misroute the
     # game fingerprint. Annotation is per-run (in memory), never cached.
-    layout = build_layout_map(unified_signals)
-    routed = annotate_gameplay_text(unified_signals, layout)
+    with clock.span("Reaction", "overlay_layout"):
+        layout = build_layout_map(unified_signals)
+        routed = annotate_gameplay_text(unified_signals, layout)
     if layout and layout.chat_regions:
         emit(
             "Reaction",
@@ -966,11 +1678,9 @@ def _reaction_select(video_path, unified_signals, duration, settings,
     # OCR fingerprinting for non-Twitch sources or when the CLI is unavailable.
     source_url = settings.get("source_url", "")
     vod_meta = None
-    if twitch_chat.is_twitch_vod(source_url) and twitch_chat.chat_available():
+    if early.has("twitch_metadata"):
         try:
-            vod_meta = twitch_chat.fetch_twitch_video_meta(
-                source_url, cancel_check=cancel_check, temp_dir=storage.temp_dir,
-            )
+            vod_meta = early.result("twitch_metadata")
         except InterruptedError:
             raise
         except Exception as exc:  # noqa: BLE001 - metadata is best-effort
@@ -989,6 +1699,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                 {"source_date": source_date, "streamer": streamer},
             )
 
+    step = time.perf_counter()
     game_segments = []
     if vod_meta and (vod_meta.get("game") or vod_meta.get("chapters")):
         chapters = vod_meta.get("chapters") or []
@@ -1050,36 +1761,41 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                     annotate_gameplay_text(seg_slice, seg_layout)
     except Exception as exc:  # noqa: BLE001 - segmentation must never block a scan
         print(f"Game timeline annotation skipped: {exc}")
+    clock.lap("Reaction", "game_detection", step)
 
     # Audio (persistent cache, shared with prosody + ASR). Keyed on the source
     # file only, so it survives a settings change (plan 5.3).
     if cancel_check:
         cancel_check()
-    wav_path = os.path.join(storage.cache_dir, f"{_audio_cache_key(video_path)}_audio.wav")
-    _extract_analysis_audio(video_path, wav_path, duration, emit=emit)
+    with clock.span("Reaction", "audio_extraction"):
+        _extract_analysis_audio(video_path, wav_path, duration, emit=emit, progress=0.49)
 
-    emit("Reaction", "Analyzing voice prosody...", 0.5)
+    # Progress below follows execution order, for both the quality path and
+    # Smart scan, and test_processing_eta checks it. The judge callbacks near
+    # the end are defined before "Scoring reactions" but run inside
+    # build_reaction_clips, after it.
+    #
+    # Prosody, audio events, chat and speech detection may have run during
+    # Perception (_EarlyWork). Their messages show only when the scan still
+    # has to wait for that work here; one already done is not announced.
+    if not early.finished("prosody"):
+        emit("Reaction", "Analyzing voice prosody...", 0.5)
     if cancel_check:
         cancel_check()
-    prosody_frames = extract_prosody(wav_path)
+    prosody_frames = early.result("prosody")
 
     # Laughter/scream burst track (ONNX audio tagger). Cached per VOD; a
     # missing model or any tagger failure just drops the channel — the fusion
     # renormalizes over whatever is present, like face/ASR.
     audio_event_frames = None
-    if audio_events_available():
+    if early.has("audio_events"):
         try:
-            # _v3: adds model-independent sudden-loudness onsets for startles
-            # (v2 added game_intensity). Old caches decode safely via defaults,
-            # but would silently leave the new channel dark, so retire them.
-            ev_cache = os.path.join(storage.cache_dir, f"{video_hash}_events_v3{signal_cache.CACHE_EXT}")
-            audio_event_frames = _cache_load(ev_cache)
-            if audio_event_frames is None:
+            if (not early.finished("audio_events")
+                    and not os.path.exists(_events_cache_path(storage, video_hash))):
                 emit("Reaction", "Listening for laughter and screams...", 0.52)
-                if cancel_check:
-                    cancel_check()
-                audio_event_frames = analyze_audio_events(wav_path, duration=duration)
-                signal_cache.save(ev_cache, audio_event_frames)
+            if cancel_check:
+                cancel_check()
+            audio_event_frames = early.result("audio_events")
         except InterruptedError:
             raise
         except Exception as exc:  # noqa: BLE001 - optional channel; never block selection
@@ -1101,31 +1817,50 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                 int(round(s.timestamp)): s.vision.facecam_box
                 for s in unified_signals if s.vision and s.vision.facecam_box
             }
-            face_frames = analyze_faces(video_path, facecam_box=stable_facecam,
-                                        per_frame_boxes=per_frame)
+            with clock.span("Reaction", "facecam_emotion"):
+                face_frames = analyze_faces(video_path, facecam_box=stable_facecam,
+                                            per_frame_boxes=per_frame)
             signal_cache.save(face_cache, face_frames)
 
-    # ASR hype (cached transcript; one VOD-level Whisper pass). Fast mode skips
+    # ASR hype (cached transcript; one VOD-level ASR pass). Fast mode skips
     # this first; captions can still transcribe selected clips downstream.
     asr_frames = None
     transcript = None
-    whisper_model_size = resolve_whisper_size(settings)
+    asr_model_size = resolve_asr_model_size(settings)
     if not fast_mode:
         try:
             tr_cache = _transcript_cache_path(
-                storage, _audio_cache_key(video_path), whisper_model_size, settings=settings,
+                storage, _audio_cache_key(video_path), asr_model_size, settings=settings,
             )
             transcript = _cache_load(tr_cache)
             if transcript is None:
                 emit("Reaction", f"Transcribing audio ({asr_display_name()})...", 0.6)
-                transcript = transcribe_vod(
-                    wav_path,
-                    model_size=whisper_model_size,
-                    cancel_check=cancel_check,
-                    progress_callback=_asr_progress_reporter(emit, 0.60, 0.64),
-                    settings=settings,
-                    words_callback=_SpeechLaneStream(event_callback, duration) if event_callback else None,
-                )
+                # Speech regions found during Perception, if they were; a
+                # failed VAD raises here and skips ASR, as it did inside it.
+                # Unregistered means the transcript file existed at planning
+                # but did not load: find the regions here, through the same
+                # cache, instead of inside transcribe_vod.
+                if early.has("speech_detection"):
+                    regions = early.result("speech_detection")
+                else:
+                    with clock.span("Reaction", "speech_detection"):
+                        regions = _find_speech_regions(
+                            _speech_regions_cache_path(storage, video_path), wav_path,
+                            cancel_check or (lambda: None),
+                        )
+                # "asr" is model load and transcription; the VAD pass inside
+                # reports itself as "speech_detection" through step_timer.
+                with clock.span("Reaction", "asr"):
+                    transcript = transcribe_vod(
+                        wav_path,
+                        model_size=asr_model_size,
+                        cancel_check=cancel_check,
+                        progress_callback=_asr_progress_reporter(emit, 0.60, 0.64),
+                        settings=settings,
+                        words_callback=_SpeechLaneStream(event_callback, duration) if event_callback else None,
+                        regions=regions,
+                        step_timer=clock.step_timer("Reaction"),
+                    )
                 signal_cache.save(tr_cache, transcript)
                 # Hand the card back before the VLM judge runs. ASR is done for
                 # this VOD -- the per-clip caption pass reloads it much later,
@@ -1134,7 +1869,8 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                 # pinned VRAM at 15.9/16.4 GB and dropped the judge from 4-5
                 # windows/min to 1-2 -- the same paging collapse MiniCPM hit.
                 # Whisper never provoked this because medium.en is ~1.5 GB.
-                release_asr_models()
+                with clock.span("Reaction", "asr_release"):
+                    release_asr_models()
             # Language honesty (plan 22 §3.6-lite): speech analysis (hype
             # lexicon + quote titles) is English-first. Say so instead of
             # silently degrading — the other channels still carry selection.
@@ -1144,7 +1880,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                     "Reaction",
                     f"This VOD sounds like '{lang}' — speech analysis is English-first today, "
                     "so clips lean on voice, face, chat, and game signals instead.",
-                    0.62,
+                    0.641,
                 )
             lexicon = load_lexicon(
                 os.path.join(get_resource_dir(), "configs", "hype_lexicon.json"),
@@ -1157,6 +1893,13 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             print(f"ASR hype skipped: {exc}")
         _emit_scan_lanes(event_callback, duration, transcript)
 
+    # The caption filter's map needs the WAV and the VAD's regions, both
+    # settled by now. A scan that perceived queued it beside Perception and
+    # this is a no-op; after cached Perception it starts here, beside the
+    # judges, and the Caption stage collects it.
+    if early.has("streamer_voice"):
+        early.start(["streamer_voice"], low_priority=True, overlapped="Reaction")
+
     # Twitch chat velocity (plan 9.1). Optional crowd-reaction channel — only
     # for Twitch VODs, only when TwitchDownloaderCLI is resolvable, and cached
     # per source (settings-independent). The fetch is time-boxed and cancellable
@@ -1165,37 +1908,19 @@ def _reaction_select(video_path, unified_signals, duration, settings,
     chat_frames = None
     chat_evidence = None
     source_url = settings.get("source_url", "")
-    if not fast_mode and twitch_chat.is_twitch_vod(source_url) and twitch_chat.chat_available():
-        chat_cache = os.path.join(
-            storage.cache_dir,
-            f"{_audio_cache_key(video_path)}_chat_evidence_v1{signal_cache.CACHE_EXT}",
-        )
-        cached = _cache_load(chat_cache)
-        if isinstance(cached, dict) and "track" in cached:
-            chat_frames = cached.get("track") or None
-            chat_evidence = cached.get("evidence")
-        else:
-            emit("Reaction", "Reading Twitch chat reactions...", 0.57)
-            try:
-                messages = twitch_chat.fetch_twitch_chat(
-                    source_url, cancel_check=cancel_check, temp_dir=storage.temp_dir,
-                )
-                track = build_chat_track(messages, duration) if messages else []
-                chat_evidence = (
-                    build_chat_evidence(messages, duration, source_scope="full_vod")
-                    if messages else None
-                )
-                signal_cache.save(chat_cache, {
-                    "track": track,
-                    "evidence": chat_evidence,
-                })
-                chat_frames = track or None
-            except InterruptedError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - chat is optional; never block selection
-                print(f"Chat channel skipped: {exc}")
+    if early.has("chat_fetch"):
+        if (not early.finished("chat_fetch")
+                and not os.path.exists(_chat_cache_path(storage, video_path))):
+            emit("Reaction", "Reading Twitch chat reactions...", 0.643)
+        try:
+            chat_frames, chat_evidence = early.result("chat_fetch")
+        except InterruptedError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - chat is optional; never block selection
+            print(f"Chat channel skipped: {exc}")
 
-    ranker, ranker_diagnostics = resolve_active_ranker()
+    with clock.span("Reaction", "ranker_load"):
+        ranker, ranker_diagnostics = resolve_active_ranker()
     # No clip_min/clip_max: boundaries are content-driven (arc onset -> payoff
     # -> settle). The engine's wide sanity invariants apply. Crucially, this
     # final selector budget goes through the shared production resolver so the
@@ -1229,14 +1954,15 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             )
 
     if fast_mode:
-        emit("Reaction", "Smart scan: finding candidate regions...", 0.58)
+        emit("Reaction", "Smart scan: finding candidate regions...", 0.53)
         first_pass_settings = dict(reaction_settings)
         first_pass_settings["max_clips"] = max(12, reaction_settings["max_clips"] * 2)
-        first_pass_curve, first_pass_clips = reaction_main.build_reaction_clips(
-            unified_signals, prosody_frames, face_frames=None,
-            asr_hype_frames=None, audio_event_frames=audio_event_frames,
-            settings=first_pass_settings, ranker=None,
-        )
+        with clock.span("Reaction", "smart_first_pass"):
+            first_pass_curve, first_pass_clips = reaction_main.build_reaction_clips(
+                unified_signals, prosody_frames, face_frames=None,
+                asr_hype_frames=None, audio_event_frames=audio_event_frames,
+                settings=first_pass_settings, ranker=None,
+            )
         # Show the creator the first-pass curve now rather than after the
         # judges: it is the same R(t) minus facecam and ASR hype, and the final
         # timeline replaces it once selection finishes.
@@ -1288,7 +2014,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                         speech_cache = _transcript_cache_path(
                             storage,
                             video_hash,
-                            whisper_model_size,
+                            asr_model_size,
                             fast=True,
                             settings=settings,
                         )
@@ -1297,16 +2023,18 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                             emit(
                                 "Reaction",
                                 f"Smart scan: reading speech in {scout_total/60.0:.1f} min of likely moments...",
-                                0.61,
+                                0.54,
                             )
-                            transcript = transcribe_vod_regions(
-                                wav_path,
-                                scout_regions,
-                                model_size=whisper_model_size,
-                                cancel_check=cancel_check,
-                                progress_callback=_asr_progress_reporter(emit, 0.61, 0.64),
-                                settings=settings,
-                            )
+                            with clock.span("Reaction", "smart_speech_scout"):
+                                transcript = transcribe_vod_regions(
+                                    wav_path,
+                                    scout_regions,
+                                    model_size=asr_model_size,
+                                    cancel_check=cancel_check,
+                                    progress_callback=_asr_progress_reporter(emit, 0.54, 0.57),
+                                    settings=settings,
+                                    step_timer=clock.step_timer("Reaction"),
+                                )
                             signal_cache.save(speech_cache, transcript)
                         lexicon = load_lexicon(
                             os.path.join(get_resource_dir(), "configs", "hype_lexicon.json"),
@@ -1322,14 +2050,16 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             emit(
                 "Perception",
                 f"Refining {len(regions)} candidate regions ({refined_seconds/60.0:.1f} min budgeted)...",
-                0.45,
+                0.57,
+                telemetry={"stage_budget_seconds": refined_seconds},
             )
             if audio_signals is None:
-                audio_signals = analyze_audio_spikes(
-                    wav_path,
-                    window_duration_sec=1.0,
-                    spike_threshold=pipeline_settings["audio_spike_threshold"],
-                )
+                with clock.span("Reaction", "audio_spikes"):
+                    audio_signals = analyze_audio_spikes(
+                        wav_path,
+                        window_duration_sec=1.0,
+                        spike_threshold=pipeline_settings["audio_spike_threshold"],
+                    )
             n_workers = int(settings.get(
                 "perceptionWorkers",
                 parallel_perception.recommended_workers(settings.get("performanceProfile")),
@@ -1337,11 +2067,13 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             # Planned AFTER the perceptionWorkers override so a user-pinned
             # count is still VRAM-capped before workers reach for the GPU.
             n_workers, gpu_ocr = parallel_perception.plan_perception(n_workers, settings)
-            refined_rows, face_frames = parallel_perception.perceive_regions(
-                video_path, regions, settings, pipeline_settings,
-                n_workers=max(1, min(n_workers, len(regions))), emit=emit,
-                gpu_ocr=gpu_ocr,
-            )
+            with clock.span("Reaction", "smart_refine_perception"):
+                refined_rows, face_frames = parallel_perception.perceive_regions(
+                    video_path, regions, settings, pipeline_settings,
+                    n_workers=max(1, min(n_workers, len(regions))),
+                    emit=_rescaled_emit(emit, (0.45, 0.57), (0.57, 0.61)),
+                    gpu_ocr=gpu_ocr, cancel_check=cancel_check,
+                )
             if audio_signals is not None:
                 unified_signals = _merge_refined_signals(
                     unified_signals, refined_rows, audio_signals
@@ -1384,10 +2116,11 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                         emit("Reaction", "Smart scan: reading facecam in likely moments...", 0.62)
                         if cancel_check:
                             cancel_check()
-                        region_faces = analyze_faces(
-                            video_path, facecam_box=stable_facecam,
-                            per_frame_boxes=per_frame_boxes, regions=regions,
-                        )
+                        with clock.span("Reaction", "facecam_emotion"):
+                            region_faces = analyze_faces(
+                                video_path, facecam_box=stable_facecam,
+                                per_frame_boxes=per_frame_boxes, regions=regions,
+                            )
                         signal_cache.save(face_cache, region_faces)
                     if region_faces:
                         face_frames = region_faces
@@ -1408,16 +2141,23 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                     f"{signal_cache.CACHE_EXT}",
                 )
                 cached = _cache_load(chat_cache)
-                if isinstance(cached, dict) and "track" in cached:
+                # Only a fetch of every region is cached, as in _read_full_chat.
+                # A failed or partial one used to be saved like real chat and
+                # trusted by every later scan of these regions. Entries from
+                # before "complete" cannot be told apart, so they refetch once.
+                if isinstance(cached, dict) and "track" in cached and cached.get("complete"):
                     chat_frames = cached.get("track") or None
                     chat_evidence = cached.get("evidence")
                 else:
                     emit("Reaction", "Smart scan: reading Twitch chat in likely moments...", 0.63)
                     try:
-                        messages = twitch_chat.fetch_twitch_chat_regions(
-                            source_url, regions,
-                            cancel_check=cancel_check, temp_dir=storage.temp_dir,
-                        )
+                        fetch_status = {}
+                        with clock.span("Reaction", "chat_fetch"):
+                            messages = twitch_chat.fetch_twitch_chat_regions(
+                                source_url, regions,
+                                cancel_check=cancel_check, temp_dir=storage.temp_dir,
+                                status=fetch_status,
+                            )
                         track = build_chat_track(messages, duration) if messages else []
                         chat_evidence = (
                             build_chat_evidence(
@@ -1425,10 +2165,12 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                             )
                             if messages else None
                         )
-                        signal_cache.save(chat_cache, {
-                            "track": track,
-                            "evidence": chat_evidence,
-                        })
+                        if fetch_status.get("complete"):
+                            signal_cache.save(chat_cache, {
+                                "track": track,
+                                "evidence": chat_evidence,
+                                "complete": True,
+                            })
                         chat_frames = track or None
                     except InterruptedError:
                         raise
@@ -1462,6 +2204,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
     # than loading a second ~2.5 GB GGUF. The backend is lazy (weights load on
     # first generate), so constructing it here costs nothing when neither judge
     # ends up running. VisualJudgeSession below receives this same object.
+    step = time.perf_counter()
     vlm_pair = None
     discovery_error = None
     shared_vlm_backend = None
@@ -1501,7 +2244,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
         scan_judge_health = {}
 
         def semantic_judge(judge_candidates_list):
-            emit("Reaction", "Local model is reading candidate transcripts...", 0.64)
+            emit("Reaction", "Local model is reading candidate transcripts...", 0.654)
             judge_started = time.monotonic()
             judge_health = {}
             try:
@@ -1519,13 +2262,13 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                     emit(
                         "Reaction",
                         f"Local model reviewed {len(verdicts)} candidate moment(s).",
-                        0.645,
+                        0.655,
                     )
                 else:
                     emit(
                         "Reaction",
                         "Local model produced no usable transcript verdicts; using signal scoring.",
-                        0.645,
+                        0.655,
                     )
                 return verdicts
             except InterruptedError:
@@ -1551,6 +2294,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                 print(f"Semantic judge skipped: {exc}")
                 return {}
             finally:
+                clock.add("Reaction", "semantic_judge", time.monotonic() - judge_started)
                 print(f"Semantic judge stage timing: judge={time.monotonic() - judge_started:.1f}s")
 
     # Keep judge: a 0-1 "would the creator keep this" score over the same
@@ -1585,7 +2329,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
         print(f"Keep judge: {len(keep_examples)} creator example(s)")
 
         def keep_judge(keep_candidates):
-            emit("Reaction", "Local model is weighing which moments you'd keep...", 0.646)
+            emit("Reaction", "Local model is weighing which moments you'd keep...", 0.656)
             started = time.monotonic()
             health = {}
             if keep_swaps:
@@ -1599,6 +2343,9 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             finally:
                 if keep_backend is not judge_backend:
                     keep_backend.close()
+                # Includes the swap: closing the vision instance before and
+                # the text model after.
+                clock.add("Reaction", "keep_judge", time.monotonic() - started)
                 print(
                     f"Keep judge stage timing: keep={time.monotonic() - started:.1f}s "
                     f"health={health}"
@@ -1612,6 +2359,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
     # or fails. Verdicts cache per window.
     visual_judge = None
     visual_session = None
+    verdict_cache = None
     outcome_sweep = None
     # Discovery and the backend were resolved above so the text judge can
     # borrow the same instance; this block only builds the visual session.
@@ -1620,6 +2368,8 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             vlm_model, vlm_mmproj = vlm_pair
             # Facecam tiles stay off on the 4B judge (measured miss). Re-wire
             # them here when the omni experiment lands so it sees a real face.
+            verdict_cache = _IndexedVerdictCache(
+                os.path.join(storage.cache_dir, "visual_judge"))
             visual_session = visual_judge_mod.VisualJudgeSession(
                 video_path,
                 transcript,
@@ -1633,10 +2383,11 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                 mmproj_path=vlm_mmproj,
                 max_candidates=40,
                 cancel_check=cancel_check,
+                cache=verdict_cache,
             )
 
             def visual_judge(judge_candidates_list):
-                emit("Reaction", "Local vision model is reviewing likely moments...", 0.645)
+                emit("Reaction", "Local vision model is reviewing likely moments...", 0.652)
                 if event_callback:
                     try:
                         windows = [
@@ -1654,6 +2405,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                 try:
                     return visual_session(judge_candidates_list)
                 finally:
+                    clock.add("Reaction", "visual_judge", time.monotonic() - started)
                     print(
                         "Visual judge stage timing: "
                         f"visual={time.monotonic() - started:.1f}s "
@@ -1682,14 +2434,16 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                 backend=visual_session.backend,
                 frame_extractor=visual_session.frame_extractor,
                 cancel_check=cancel_check,
+                cache=verdict_cache,
             )
 
             def outcome_sweep(sweep_duration):
-                emit("Reaction", "Local vision model is scanning for match outcomes...", 0.64)
+                emit("Reaction", "Local vision model is scanning for match outcomes...", 0.651)
                 started = time.monotonic()
                 try:
                     return sweep_session(sweep_duration)
                 finally:
+                    clock.add("Reaction", "outcome_sweep", time.monotonic() - started)
                     print(
                         "Outcome sweep stage timing: "
                         f"sweep={time.monotonic() - started:.1f}s "
@@ -1711,6 +2465,12 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             reason="vision model files not found",
         )
 
+    # The judges above report from inside build_reaction_clips, in this order:
+    # outcome sweep 0.651, visual 0.652, semantic 0.654/0.655, keep 0.656.
+    # Up to three shared-coverage rounds then repeat visual, semantic and
+    # keep; run_pipeline's emitter holds the number there and still shows
+    # each message.
+    clock.lap("Reaction", "judge_setup", step)
     emit("Reaction", "Scoring reactions and selecting clips...", 0.65)
     if cancel_check:
         cancel_check()
@@ -1723,19 +2483,25 @@ def _reaction_select(video_path, unified_signals, duration, settings,
     # skip the close entirely and strand all of it in the long-lived backend
     # process for as long as the app stayed open.
     try:
-        curve, reaction_clips = reaction_main.build_reaction_clips(
-            unified_signals, prosody_frames, face_frames=face_frames,
-            asr_hype_frames=asr_frames, audio_event_frames=audio_event_frames,
-            chat_frames=chat_frames,
-            settings=reaction_settings, ranker=ranker,
-            transcript=transcript,
-            semantic_judge=semantic_judge,
-            visual_judge=visual_judge,
-            outcome_sweep=outcome_sweep,
-            ranker_diagnostics=ranker_diagnostics,
-            keep_judge=keep_judge,
-        )
+        # "selection" is build_reaction_clips less the judges it calls, which
+        # count under their own names.
+        with clock.span("Reaction", "selection"):
+            curve, reaction_clips = reaction_main.build_reaction_clips(
+                unified_signals, prosody_frames, face_frames=face_frames,
+                asr_hype_frames=asr_frames, audio_event_frames=audio_event_frames,
+                chat_frames=chat_frames,
+                settings=reaction_settings, ranker=ranker,
+                transcript=transcript,
+                semantic_judge=semantic_judge,
+                visual_judge=visual_judge,
+                outcome_sweep=outcome_sweep,
+                ranker_diagnostics=ranker_diagnostics,
+                keep_judge=keep_judge,
+            )
     finally:
+        step = time.perf_counter()
+        if verdict_cache is not None and verdict_cache.keys:
+            _record_cache_index(storage, video_path, visual_verdicts=verdict_cache.keys)
         if visual_session is not None:
             try:
                 _report_visual_judge_health(visual_session.health(), event_callback)
@@ -1753,6 +2519,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
                 shared_vlm_backend.close()
             except Exception:  # noqa: BLE001 - cleanup is best-effort
                 pass
+        step = clock.lap("Reaction", "judge_close", step)
 
     # Persist the fused curve that candidate generation thresholds. Everything
     # downstream of detect_arcs is already captured in candidates.v1.json, but
@@ -1799,6 +2566,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
     # rejects transient false positives (a game character / HUD portrait the
     # per-frame tracker snapped to) and supports streamers who use more than one
     # cam position -- each clip is framed with the layout its own window matches.
+    step = clock.lap("Reaction", "artifacts", step)
     facecam_layout_model = facecam_mod.detect_facecam_layout_model(unified_signals)
     facecam_layouts = facecam_layout_model.layouts
     if facecam_layouts:
@@ -1824,6 +2592,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
         if len(facecam_layouts) > 1:
             emit("Reaction", f"Detected {len(facecam_layouts)} facecam layouts; framing each clip to the one on screen.", 0.66)
 
+    step = clock.lap("Reaction", "facecam_layouts", step)
     # Authored canvases can switch geometry between intro/chat/game scenes.
     # Keep a timestamped set of structural content windows and resolve again
     # at each selected clip's peak. The legacy motion detector remains a
@@ -1853,6 +2622,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
         emit("Reaction", "Windowed game capture detected; exports will frame the game viewport.", 0.66)
         print(f"Gameplay viewport: {fallback_gameplay_box}")
 
+    step = clock.lap("Reaction", "gameplay_layouts", step)
     stories, clips = [], []
     requested_export_layout = settings.get("exportLayout", "auto")
     resolved_export_layout = resolve_export_layout(
@@ -1904,6 +2674,7 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             f"{vtuber_model.get('status', 'uncertain')} (normal facecam retained)"
         )
 
+    step = clock.lap("Reaction", "layout_choice", step)
     # Manual selections made later in the VOD Editor need the same framing
     # evidence as automatic picks. Persist only the compact geometry model:
     # representative facecam boxes, timestamped detections, authored gameplay
@@ -1973,6 +2744,8 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             framing_callback(framing_model)
         except Exception as exc:  # noqa: BLE001 - framing persistence is best-effort
             print(f"Could not persist VOD framing model: {exc}")
+
+    step = clock.lap("Reaction", "framing_model", step)
 
     def _gameplay_box_for_window(start: float, end: float, peak_timestamp=None):
         clip_gameplay_box = None
@@ -2148,7 +2921,11 @@ def _reaction_select(video_path, unified_signals, duration, settings,
             review_tier=REVIEW_TIER_SECOND_LOOK,
         ))
 
+    # Per-clip framing probes frames at each clip's peak, for the deck and
+    # for every second-look card.
+    step = clock.lap("Reaction", "clip_framing", step)
     timeline = _reaction_timeline(curve, game_segments=game_segments)
+    clock.lap("Reaction", "timeline", step)
     # Per-candidate audit rows (selection_trace + feature dicts) ride ONLY
     # under a private key: core/job_manager pops it into
     # data/jobs/<job_id>/candidates.v1.json BEFORE the timeline is persisted to
@@ -2191,9 +2968,12 @@ def run_pipeline(video_path: str, settings: dict = None, progress_callback=None,
     )
     storage.init_workspace()
     
-    # Helper to pass callback easily
-    def _emit(phase, msg, prog, telemetry=None):
-        emit_progress(phase, msg, prog, progress_callback, telemetry=telemetry)
+    # Helper to pass callback easily. Every progress report in this run goes
+    # through it, so the number the job manager sees never moves backwards,
+    # and it carries the step timings to the job manager.
+    clock = _SubstageClock()
+    _emit = clock.attach(_monotonic_emitter(progress_callback))
+    early = None
 
     def _mark(label, started_at):
         elapsed = time.perf_counter() - started_at
@@ -2205,14 +2985,15 @@ def run_pipeline(video_path: str, settings: dict = None, progress_callback=None,
     try:
         reset_vision_state()
         video_info = extract_metadata(video_path)
-        fps = float(video_info.get("r_frame_rate", "30/1").split("/")[0])
+        # Rounded for the message: OpenCV reads a 60 fps VOD as 60.00012.
+        fps = round(_video_fps(video_info), 2)
         duration = float(video_info.get("duration", 0.0))
         width = float(video_info.get("width", 1280.0))
         height = float(video_info.get("height", 720.0))
         
         meta_msg = f"Video metadata: {{'fps': {fps}, 'duration': {duration}, 'width': {width}, 'height': {height}}}"
         print(meta_msg)
-        _emit("Perception", meta_msg, 0.05)
+        _emit("Perception", meta_msg, 0.05, telemetry={"duration": duration})
         device_msg = f"Device summary: {device_summary()}"
         print(device_msg)
         _emit("Perception", device_msg, 0.06)
@@ -2220,9 +3001,23 @@ def run_pipeline(video_path: str, settings: dict = None, progress_callback=None,
         # Check cache
         video_hash = _video_cache_key(video_path, settings)
         cache_path = os.path.join(storage.cache_dir, f"{video_hash}_signals{signal_cache.CACHE_EXT}")
+        # Before anything is saved under this hash, so even a scan that ends
+        # early leaves its files attributed to the source.
+        _record_cache_index(storage, video_path, video_hashes=[video_hash])
+
+        # Twitch metadata and chat need only the URL: fetch them now, beside
+        # Perception. The WAV-only steps start once the WAV exists.
+        early = _EarlyWork(clock, _check_cancel)
+        analysis_wav = os.path.join(storage.cache_dir, f"{_audio_cache_key(video_path)}_audio.wav")
+        network_steps, audio_steps = _plan_early_work(
+            early, video_path, analysis_wav, duration, settings, pipeline_settings,
+            storage, video_hash,
+        )
+        early.start(network_steps)
 
         stage_started = time.perf_counter()
-        unified_signals = signal_cache.load(cache_path)
+        with clock.span("Perception", "signal_cache_load"):
+            unified_signals = signal_cache.load(cache_path)
         if unified_signals is not None:
             msg = "Found cached signals. Skipping heavy perception phase..."
             print(msg)
@@ -2236,16 +3031,18 @@ def run_pipeline(video_path: str, settings: dict = None, progress_callback=None,
             msg = "Extracting audio..."
             print(msg)
             _emit("Perception", msg, 0.1)
-            _extract_analysis_audio(video_path, wav_path, duration, emit=_emit)
+            with clock.span("Perception", "audio_extraction"):
+                _extract_analysis_audio(video_path, wav_path, duration, emit=_emit)
             stage_started = _mark("Audio extraction", stage_started)
 
             print("Analyzing audio spikes...")
             audio_started = time.perf_counter()
-            audio_signals = analyze_audio_spikes(
-                wav_path,
-                window_duration_sec=1.0,
-                spike_threshold=pipeline_settings["audio_spike_threshold"]
-            )
+            with clock.span("Perception", "audio_spikes"):
+                audio_signals = analyze_audio_spikes(
+                    wav_path,
+                    window_duration_sec=1.0,
+                    spike_threshold=pipeline_settings["audio_spike_threshold"]
+                )
             _mark("Audio spike analysis", audio_started)
 
             # --- Parallel perception (handbook/20): saturate the CPU. Falls back
@@ -2264,17 +3061,39 @@ def run_pipeline(video_path: str, settings: dict = None, progress_callback=None,
                     n_workers, gpu_ocr = parallel_perception.plan_perception(
                         n_workers, settings,
                     )
+                    # Started after the worker count is planned: both readings
+                    # cap workers by free RAM, which these steps then use.
+                    early.start(_early_audio_steps(audio_steps, duration), low_priority=True)
                     msg = (
                         f"Perceiving in parallel across {n_workers} "
                         f"{'GPU' if gpu_ocr else 'CPU'} workers..."
                     )
                     print(msg)
                     _emit("Perception", msg, 0.15)
-                    rows, face_frames_cache = parallel_perception.perceive_parallel(
-                        video_path, duration, settings, pipeline_settings, n_workers,
-                        _emit, gpu_ocr=gpu_ocr,
-                    )
+                    # A coverage-gap refill inside reports perceive_regions'
+                    # 0.45-0.57; keep it under Event, which starts at 0.45.
+                    # When each slice came back, so a straggling worker shows.
+                    finished_slices = []
+
+                    def _slice_done(index, start, end, seconds):
+                        finished_slices.append({
+                            "slice": index, "start": round(start, 1),
+                            "end": round(end, 1), "finished_seconds": round(seconds, 1),
+                        })
+                        clock.set_detail("Perception", "workers", list(finished_slices))
+
+                    with clock.span("Perception", "perception_workers"):
+                        rows, face_frames_cache = parallel_perception.perceive_parallel(
+                            video_path, duration, settings, pipeline_settings, n_workers,
+                            _rescaled_emit(_emit, (0.45, 0.57), (0.42, 0.44)), gpu_ocr=gpu_ocr,
+                            on_slice_done=_slice_done, cancel_check=_check_cancel,
+                        )
                     unified_signals = _rows_to_signals(rows, audio_signals)
+                except InterruptedError:
+                    # A cancel, not a perception failure. InterruptedError is an
+                    # OSError, so the Exception branch below used to catch it and
+                    # start the sequential loop before the next emit raised again.
+                    raise
                 except parallel_perception.WorkerStallError:
                     # A worker hung for half an hour — the sequential loop would
                     # hit the same pathological section hours later. Fail the job
@@ -2286,15 +3105,18 @@ def run_pipeline(video_path: str, settings: dict = None, progress_callback=None,
                     unified_signals = None
 
             if unified_signals is None:
+                early.start(_early_audio_steps(audio_steps, duration), low_priority=True)
                 msg = "Extracting frames and processing vision/OCR (sequential)..."
                 print(msg)
                 _emit("Perception", msg, 0.15)
-                unified_signals = _sequential_perceive(
-                    video_path, duration, settings, pipeline_settings,
-                    audio_signals, storage, _emit
-                )
+                with clock.span("Perception", "perception_sequential"):
+                    unified_signals = _sequential_perceive(
+                        video_path, duration, settings, pipeline_settings,
+                        audio_signals, storage, _emit
+                    )
 
-            signal_cache.save(cache_path, unified_signals)
+            with clock.span("Perception", "signal_cache_save"):
+                signal_cache.save(cache_path, unified_signals)
             if face_frames_cache is not None:
                 signal_cache.save(
                     os.path.join(storage.cache_dir, cache_keys.face_cache_name(
@@ -2325,6 +3147,8 @@ def run_pipeline(video_path: str, settings: dict = None, progress_callback=None,
             framing_callback=framing_callback,
             event_callback=event_callback,
             timeline_callback=timeline_callback,
+            clock=clock,
+            early=early,
         )
         primary_clips = [
             clip for clip in clips
@@ -2369,6 +3193,9 @@ def run_pipeline(video_path: str, settings: dict = None, progress_callback=None,
         # captioned. Running one pass over both tiers is what makes More
         # moments look like the rest of the deck.
         caption_started = time.perf_counter()
+        # Streamer-only captions: the map built beside Perception (or
+        # Reaction), None when the setting is off or none could be built.
+        streamer_voice = _collect_streamer_voice(early, clock, _emit)
         captions = caption_main.process_clips_to_captions(
             primary_clips + second_look_clips, stories, video_path, storage.temp_dir,
             transcript=vod_transcript,
@@ -2376,6 +3203,7 @@ def run_pipeline(video_path: str, settings: dict = None, progress_callback=None,
             # Detected game id -> lead hashtag on every clip's post metadata.
             game=pipeline_settings.get("game", "generic"),
             on_caption=_caption_announcer(event_callback),
+            streamer_voice=streamer_voice,
         )
         _mark("Caption generation", caption_started)
         
@@ -2397,11 +3225,10 @@ def run_pipeline(video_path: str, settings: dict = None, progress_callback=None,
         # proxy pass. Final-quality rendering stays on demand for exports
         # (ClipService.ensure_rendered). Baking Second-look here means More
         # moments is instant in Theater Review.
+        # Through _emit like every other report: renders finish on a thread
+        # pool, so "clip 3/4" can arrive after "clip 4/4".
         def _export_cb(ev):
-            if progress_callback:
-                progress_callback(ev.get("phase", "Export"), ev.get("message", ""), ev.get("progress", 0.0))
-            else:
-                print(f"[{ev.get('phase', 'Export')}] {ev.get('message', '')} ({ev.get('progress', 0.0)*100:.1f}%)")
+            _emit(ev.get("phase", "Export"), ev.get("message", ""), ev.get("progress", 0.0))
 
         export_started = time.perf_counter()
         exported_paths = export_main.export_clips(
@@ -2426,6 +3253,10 @@ def run_pipeline(video_path: str, settings: dict = None, progress_callback=None,
     
     # Finally block ensures cleanup even on failure
     finally:
+        # Stop and join the early steps first: a chat fetch writes into
+        # temp_dir, and nothing may keep working for a scan that has ended.
+        if early is not None:
+            early.close()
         storage.cleanup_temp()
         
     # The timestamped transcript is also a durable product artifact: Stream

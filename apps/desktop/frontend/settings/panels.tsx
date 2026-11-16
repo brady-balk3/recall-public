@@ -2,8 +2,10 @@
 // Copyright (C) 2026 Brady Balk
 /** Settings building blocks: rows, the storage report, and what Recall has learned. */
 import { useCallback, useEffect, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { StudioButton, type ChoiceOption } from "../components/StudioControls";
 import { apiFetch } from "../lib/api";
+import { usePolling } from "../lib/polling";
 import { learningStateDescription, learningStateLabel, plural } from "../lib/copy";
 import { Film, HardDrive, RefreshCw, Trash2 } from "../lib/icons";
 import { useJobStore } from "../lib/store";
@@ -98,11 +100,8 @@ export function StoragePanel({ commitSettings, onManageClips }: { commitSettings
   }, [settings.apiEndpoint]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => {
-    if (!report?.downloaded_sources.sources.some((source) => source.state === "in_use")) return;
-    const timer = window.setInterval(() => void load(), 1500);
-    return () => window.clearInterval(timer);
-  }, [report?.downloaded_sources.sources, load]);
+  // Only while a source is in use; waits while the window is minimized.
+  usePolling(load, 1500, { enabled: !!report?.downloaded_sources.sources.some((source) => source.state === "in_use") });
 
   const sourceAction = async (source: DownloadedSource, action: "remove" | "pin" | "restore") => {
     const key = `${source.source_key}:${action}`;
@@ -208,7 +207,13 @@ export function StoragePanel({ commitSettings, onManageClips }: { commitSettings
 
 /** Local-taste learning progress + reset (plan 22). */
 export function LearningPanel() {
-  const { learningStatus, learningLoading, loadLearningStatus, resetLearning } = useJobStore();
+  // Only these four: the whole store also changes with every scan event.
+  const { learningStatus, learningLoading, loadLearningStatus, resetLearning } = useJobStore(useShallow((s) => ({
+    learningStatus: s.learningStatus,
+    learningLoading: s.learningLoading,
+    loadLearningStatus: s.loadLearningStatus,
+    resetLearning: s.resetLearning,
+  })));
   const [confirm, setConfirm] = useState(false);
   useEffect(() => { loadLearningStatus(); }, [loadLearningStatus]);
   const count = learningStatus?.label_count ?? 0;

@@ -3,7 +3,6 @@
 import cv2
 import numpy as np
 from core.models.signal import VisionSignal
-from core.device import get_torch_device
 from core.geometry import iou as _calculate_iou
 from engines.vision import person_onnx
 
@@ -28,7 +27,8 @@ FULLFRAME_PERSON_MIN_BOTTOM = 0.88
 
 # Module-level state for temporal tracking
 _model = None
-_DEVICE = get_torch_device()  # 'cuda' on an NVIDIA box, else 'cpu'
+# No module-level device probe: detection runs on onnxruntime, whose providers
+# (core.device.get_ort_providers) decide CPU or GPU when the session is built.
 _facecam_history = []  # List of dicts: {'box': [x, y, w, h], 'frames_seen': int}
 _stable_facecam = None  # No default fallback, starts as None
 _stable_facecam_source = None

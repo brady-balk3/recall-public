@@ -50,7 +50,7 @@ def speech_plan(groups: tuple | None = None) -> dict:
                            "transport_cache_overhead_not_included"],
         "groups": [
             {"id": group, "label": {"asr": "Speech recognition", "aligner": "Caption timing",
-                                    "vad": "Speech detection", "speaker": "Speaker attribution"}[group],
+                                    "vad": "Speech detection", "speaker": "Streamer voice"}[group],
              "source": repo, "revision": revision, "file_count": len(files),
              "artifact_bytes": sum(size for size, _ in files.values())}
             for group, repo, revision, files, _ in groups

@@ -105,6 +105,9 @@ def expected_keep_score(llm, prompt: str, content: str, fallback_digit: int) -> 
     """
     try:
         import jinja2
+
+        from core.device import prepare_llama_cuda
+        prepare_llama_cuda()  # CUDA DLL folders on the search path before llama.dll loads
         import llama_cpp
         import numpy as np
 

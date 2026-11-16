@@ -16,7 +16,7 @@ export function isTerminalScanStatus(status: JobStatus | undefined): boolean {
 export function hasActiveDesktopWork(
   jobs: Job[],
   sessions: Session[],
-  exportOperation?: ExportOperation,
+  exportOperation?: Pick<ExportOperation, "status">,
 ): boolean {
   return jobs.some((job) => isActiveScanStatus(job.status))
     || sessions.some((session) => isActiveScanStatus(session.status))

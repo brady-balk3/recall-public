@@ -5,6 +5,15 @@ pip-audit==2.10.1
 ruff==0.15.21
 bandit==1.9.4
 
+# Development and research only since 2026-11-15; the engine does not import
+# it and the packaged engine does not bundle it. Used by the Second Look
+# rejector's training/eval scripts (engines/reaction/pass_rejector.py
+# fit_shallow_model, the one allowed import site), the research scripts, and
+# as the reference in tests/unit/kaldi_fbank_torch_reference.py (those tests
+# skip without it). The GPU build is optional here:
+#   pip install torch==2.12.1+cu126 --index-url https://download.pytorch.org/whl/cu126
+torch==2.12.1
+
 # Packaging the portable engine: apps/desktop's `package:engine` runs
 # `python -m PyInstaller apps/api/recall-engine.spec`. Undeclared until now,
 # so a fresh clone could build the client and not the engine it needs.

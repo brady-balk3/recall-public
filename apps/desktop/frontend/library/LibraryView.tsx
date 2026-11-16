@@ -11,6 +11,7 @@ import { fmtDurationHuman } from "../lib/format";
 import { Check, Grid, Plus, Queue, Search, Trash2, X } from "../lib/icons";
 import type { Session } from "../lib/store";
 import { hypeOf } from "../home/homeModel";
+import { LazyFill } from "../ui/LazyFill";
 import { MomentCurve } from "../ui/MomentCurve";
 import { SessionCard, SessionStatusBadge, isFromTwitch, sessionDate } from "../ui/SessionCard";
 import type { NewStreamKind } from "../shell/views";
@@ -26,6 +27,28 @@ const SORTS: { id: LibrarySort; label: string }[] = [
   { id: "kept", label: "Most kept" },
   { id: "name", label: "A–Z" },
 ];
+
+/** Cards drawn in full on open: more than a maximized window shows, so the first screen never waits. */
+const EAGER_CARDS = 36;
+/**
+ * Most cards one grid block holds before the next one starts. Divisible by every
+ * column count the grid reaches (2–6), so a split never leaves a short row mid-group;
+ * it's what keeps a flat sort ("Most kept", "A–Z") from building every card on open.
+ */
+const BLOCK = 60;
+
+/** Splits each group into blocks of up to BLOCK, noting where each starts in the page. */
+export function blockSessions(groups: { key: string; sessions: Session[] }[], size = BLOCK) {
+  let start = 0;
+  return groups.map((group) => {
+    const blocks: { key: string; start: number; sessions: Session[] }[] = [];
+    for (let i = 0; i < group.sessions.length; i += size) {
+      blocks.push({ key: `${group.key}:${i}`, start: start + i, sessions: group.sessions.slice(i, i + size) });
+    }
+    start += group.sessions.length;
+    return blocks;
+  });
+}
 
 const when = (session: Session) => session.createdAt || session.updatedAt;
 
@@ -89,6 +112,7 @@ export function LibraryView({ sessions, onOpen, onDelete, onDeleteMany, onNew }:
     );
   }, [sessions, query, sort, source]);
   const groups = groupSessions(visible, sort);
+  const blocks = blockSessions(groups);
 
   const visibleIds = useMemo(() => new Set(visible.map((s) => s.id)), [visible]);
   useEffect(() => {
@@ -183,12 +207,12 @@ export function LibraryView({ sessions, onOpen, onDelete, onDeleteMany, onNew }:
       {!visible.length ? (
         <div className="lib-none t3" role="status"><Search aria-hidden="true" />No sessions match “{query.trim()}”.</div>
       ) : (
-        groups.map((group) => (
+        groups.map((group, groupIndex) => (
           <section key={group.key} className="lib-g" aria-label={group.label || "Sessions"}>
             {group.label && <div className="lib-gh"><b>{group.label}</b><span className="t3">{group.sessions.length} {group.sessions.length === 1 ? "session" : "sessions"}</span></div>}
-            {layout === "grid" ? (
-              <div className="sessions lib-grid">
-                {group.sessions.map((session) => (
+            {layout === "grid" ? blocks[groupIndex].map((block) => (
+              <LazyFill key={block.key} eager={block.start < EAGER_CARDS} count={block.sessions.length} className="sessions lib-grid" placeholderClass="lib-ph">
+                {() => block.sessions.map((session) => (
                   <SessionCard
                     key={session.id}
                     session={session}
@@ -200,9 +224,11 @@ export function LibraryView({ sessions, onOpen, onDelete, onDeleteMany, onNew }:
                     onDelete={onDelete}
                   />
                 ))}
-              </div>
-            ) : (
-              <SessionList sessions={group.sessions} onOpen={onOpen} onDelete={onDelete} selecting={selecting} selectedIds={selectedIds} onToggle={toggle} />
+              </LazyFill>
+            )) : (
+              <LazyFill eager={blocks[groupIndex][0].start < EAGER_CARDS} count={group.sessions.length} className="lib-rows" placeholderClass="lib-rph">
+                {() => <SessionList sessions={group.sessions} onOpen={onOpen} onDelete={onDelete} selecting={selecting} selectedIds={selectedIds} onToggle={toggle} />}
+              </LazyFill>
             )}
           </section>
         ))

@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Brady Balk
+import contextlib
 import os
 import re
+import sys
 from typing import Optional
 
 import cv2
@@ -55,7 +57,40 @@ def _ocr_device() -> str:
     return "cpu"
 
 
+@contextlib.contextmanager
+def _torch_hidden():
+    """Make torch look absent while PaddleOCR is imported and built.
+
+    paddlex imports modelscope unconditionally (paddlex/inference/utils/
+    official_models.py, for model downloads Recall never uses), and
+    modelscope's logger setup imports torch whenever
+    ``importlib.util.find_spec("torch")`` finds it (modelscope/utils/
+    logger.py, for torch.distributed rank checks). Measured 2026-11-15: that
+    was the only torch import left in a perception worker, and it costs each
+    worker 1.3 s and ~477 MB RSS. The packaged engine carries modelscope too
+    (1902 modules in the 2026-11-05 PYZ), so the import happened there as well.
+    A None entry in sys.modules is Python's own "not importable" marker:
+    find_spec returns None and ``import torch`` raises ImportError, which both
+    modelscope and paddlex treat as "no torch". Only the import and the
+    constructor run inside; if torch is already loaded nothing changes.
+    """
+    if "torch" in sys.modules:
+        yield
+        return
+    sys.modules["torch"] = None
+    try:
+        yield
+    finally:
+        if "torch" in sys.modules and sys.modules["torch"] is None:
+            del sys.modules["torch"]
+
+
 def _build_paddle_ocr(device: str):
+    with _torch_hidden():
+        return _construct_paddle_ocr(device)
+
+
+def _construct_paddle_ocr(device: str):
     from paddleocr import PaddleOCR
 
     return PaddleOCR(

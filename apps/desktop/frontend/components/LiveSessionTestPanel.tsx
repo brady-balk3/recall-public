@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Broadcast, Check, Film, FolderOpen, Play, Target, Video, X } from "../lib/icons";
 import RememberHotkeySetting, { displayHotkey } from "./RememberHotkeySetting";
 import { fmtClock } from "../lib/format";
+import { useNow } from "../lib/polling";
 import { plural } from "../lib/copy";
 import {
   buildRecallRegionPlan,
@@ -163,7 +164,6 @@ export default function RecallLivePanel({ onScanRecording, sessions = [] }: Live
   const [session, setSession] = useState<RecallSession | null>(null);
   const [busy, setBusy] = useState<"start" | "remember" | "stop" | "scan" | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [now, setNow] = useState(Date.now());
   const [markSource, setMarkSource] = useState<MarkSource>("stream");
   const [vodUrl, setVodUrl] = useState("");
   const [earlier, setEarlier] = useState<RecallSession[]>([]);
@@ -210,11 +210,8 @@ export default function RecallLivePanel({ onScanRecording, sessions = [] }: Live
     return () => { mounted = false; };
   }, [loadEarlier]);
 
-  useEffect(() => {
-    if (session?.status !== "active") return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [session?.status]);
+  // The shared 1s clock, ticking while the session records.
+  const now = useNow(session?.status === "active");
 
   useEffect(() => {
     const unsubscribe = window.electronAPI?.onRememberResult?.((raw) => {
@@ -285,7 +282,6 @@ export default function RecallLivePanel({ onScanRecording, sessions = [] }: Live
         metadata: { mark_source: "local_replay", ui_surface: "recall_live_tab" },
       });
       setSession(next);
-      setNow(Date.now());
       setMessage(null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not start a Recall session.");

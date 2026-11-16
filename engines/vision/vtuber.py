@@ -444,4 +444,8 @@ def apply_overlay(layout: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, 
         "top": float(overlay.get("top", OVERLAY_TOP)),
         "lower_fade": float(overlay.get("lower_fade", OVERLAY_LOWER_FADE)),
     }
+    if overlay.get("per_frame"):
+        # Key every frame with the anime matting model at render time
+        # (avatar_matting.write_mask_video); the plate stays the fallback.
+        resolved["vtuber_overlay"]["per_frame"] = True
     return resolved

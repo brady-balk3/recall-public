@@ -4,7 +4,7 @@
 
 Turns the creator's caption-style settings (a small JSON object owned by the
 frontend) into concrete ASS directives used by the .ass generators in
-``whisper_asr``. Fonts, sizes and positions are whitelisted so a bad client
+``asr``. Fonts, sizes and positions are whitelisted so a bad client
 can't inject arbitrary lines into the ASS ``[V4+ Styles]`` header, and colors
 are validated hex → ASS ``&HAABBGGRR``.
 

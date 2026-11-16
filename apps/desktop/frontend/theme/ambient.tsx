@@ -7,8 +7,8 @@
  * - <GlassDefs/>   the SVG edge-lens filter (#lg-lens) that .glass-float and
  *                  .glass-read refract through: neutral in the middle, bending
  *                  toward the rim. R carries horizontal shift, G vertical.
- * - <AmbientGlow/> the background. Dark: the dot field (theme/dotfield.ts), lit
- *                  by `image`, the clips in view and the accent. Light: black
+ * - <AmbientGlow/> the background. Dark: the dot field (theme/dotfield.ts), a
+ *                  fixed layer lit by `image` and the accent. Light: black
  *                  ink on paper keeps the blurred wash of `image`, cross-fading
  *                  between two layers when the image changes, plus grain.
  * - useGlassHighlight() one passive pointer listener that feeds --mx / --my to
@@ -52,24 +52,23 @@ export function GlassDefs() {
  * session frame); undefined leaves the last one in place rather than flashing
  * to black between views.
  */
-export function AmbientGlow({ image, accent, theme, view }: { image?: string; accent: AccentChoice; theme: string; view: string }) {
+export function AmbientGlow({ image, accent, theme }: { image?: string; accent: AccentChoice; theme: string }) {
   const [held, setHeld] = useState(image);
   useEffect(() => { if (image) setHeld(image); }, [image]);
   useEffect(() => {
     if (held) document.documentElement.style.setProperty("--amb-url", `url("${held}")`);
   }, [held]);
-  return theme === "light" ? <FootageGlow image={image} /> : <DotGround image={image ?? held} accent={accent} view={view} />;
+  return theme === "light" ? <FootageGlow image={image} /> : <DotGround image={image ?? held} accent={accent} />;
 }
 
 /**
- * Layout effects, not passive ones: they run after the new view is in the DOM
- * but before the browser paints it, so the new view's field is in place for the
- * very first frame it shows in.
+ * The fixed field under everything. It doesn't know or care which view is open:
+ * only the frame and the accent reach it. The first draw is a layout effect so
+ * the field is there in the app's very first frame.
  */
-function DotGround({ image, accent, view }: { image?: string; accent: AccentChoice; view: string }) {
+function DotGround({ image, accent }: { image?: string; accent: AccentChoice }) {
   const host = useRef<HTMLDivElement>(null);
   const field = useRef<DotField | null>(null);
-  const lastView = useRef(view);
   const dot = accentDotRgb(accent);
   const dotKey = dot.join();
 
@@ -80,12 +79,7 @@ function DotGround({ image, accent, view }: { image?: string; accent: AccentChoi
     // created once; later changes go through update() below
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useLayoutEffect(() => { field.current?.update({ frameUrl: image, dot }); }, [image, dotKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  useLayoutEffect(() => {
-    if (view === lastView.current) return;
-    lastView.current = view;
-    field.current?.viewChanged();
-  }, [view]);
+  useEffect(() => { field.current?.update({ frameUrl: image, dot }); }, [image, dotKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div id="ambient" aria-hidden="true">

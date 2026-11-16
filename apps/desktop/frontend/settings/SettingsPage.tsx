@@ -181,6 +181,9 @@ export function SettingsPage({ section, sectionNonce, onNavigate }: { section: S
               <ExportLayoutChoices value={settings.exportLayout} onChange={(exportLayout) => { commit({ exportLayout }); persistLocal("recall-export-layout", exportLayout); }} />
             </SettingRow>
             <CaptionEditor caption={caption} onChange={patchCaption} highlightControl={<CaptionHighlightPicker value={settings.captionColor} accent={settings.accent} onChange={setCaptionColor} />} />
+            <SettingRow title="Only caption my voice" copy="Leaves out teammates and other voices on stream. Turn it off if lines of yours go missing.">
+              <StudioSwitch checked={settings.captionStreamerOnly !== false} onChange={(captionStreamerOnly) => commit({ captionStreamerOnly })} label="Only caption my voice" />
+            </SettingRow>
           </section>
 
           <section className="set-sec glass" id="settings-look" aria-labelledby="settings-look-h">

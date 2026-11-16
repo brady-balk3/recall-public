@@ -21,6 +21,47 @@ EVENTS = frozenset({
 })
 
 
+# Step names run_pipeline's _SubstageClock records (stage_timings[stage]
+# ["substages"]). Fixed strings written by the pipeline, never content.
+SUBSTAGES = frozenset({
+    "signal_cache_load", "audio_extraction", "audio_spikes", "perception_workers",
+    "perception_sequential", "signal_cache_save", "overlay_layout", "twitch_metadata",
+    "game_detection", "prosody", "audio_events", "facecam_emotion", "speech_detection",
+    "asr", "asr_release", "chat_fetch", "ranker_load", "smart_first_pass",
+    "smart_speech_scout", "smart_refine_perception", "judge_setup", "outcome_sweep",
+    "visual_judge", "semantic_judge", "keep_judge", "selection", "judge_close",
+    "artifacts", "facecam_layouts", "gameplay_layouts", "layout_choice",
+    "framing_model", "clip_framing", "timeline", "background_wait",
+})
+
+
+def _substage_lines(timings: dict) -> list:
+    lines = []
+    for phase in sorted(PHASES):
+        entry = timings.get(phase)
+        steps = entry.get("substages") if isinstance(entry, dict) else None
+        if isinstance(steps, dict):
+            for name in sorted(steps):
+                step = steps[name]
+                if name not in SUBSTAGES or not isinstance(step, dict):
+                    continue
+                line = (f"{phase}.{name}: {_number(step.get('seconds'))}s "
+                        f"x{_number(step.get('calls'))}")
+                if step.get("overlapped") in PHASES:
+                    line += f" overlapped={step['overlapped']}"
+                lines.append(line)
+        workers = entry.get("workers") if isinstance(entry, dict) else None
+        if isinstance(workers, list):
+            for worker in workers:
+                if isinstance(worker, dict):
+                    lines.append(
+                        f"{phase}.slice {_number(worker.get('slice'))}: "
+                        f"{_number(worker.get('start'))}-{_number(worker.get('end'))}s "
+                        f"finished at {_number(worker.get('finished_seconds'))}s"
+                    )
+    return lines
+
+
 JUDGE_HEALTH_EVENTS = (
     "semantic_judge_health", "semantic_judge_degraded",
     "visual_judge_health", "visual_judge_degraded", "visual_judge_skipped",
@@ -140,6 +181,9 @@ def support_report(job: dict, events, *, packaged: bool, cpu_count=None, ram_gb=
             entry = timings.get(phase)
             if isinstance(entry, dict):
                 lines.append(f"{phase}: {_number(entry.get('duration_seconds'))}")
+        steps = _substage_lines(timings)
+        if steps:
+            lines.extend(["", "--- stage steps (seconds, calls) ---", *steps])
     # Judge health comes from its own lookup: a long export's progress events
     # would otherwise push it out of the recent-events tail.
     if job.get("scan_health") or health_events:

@@ -342,11 +342,14 @@ def available_vram_gb():
     Callers sizing a worker pool want ``stable_available_vram_gb`` instead;
     this is the single-shot probe underneath it.
 
-    Deliberately prefers ``nvidia-smi`` over ``torch.cuda.mem_get_info``: the
-    torch call initializes a CUDA context in the caller (~300 MB) purely to ask
-    how much VRAM is free, which on a tight card eats the very headroom the
-    answer is used to allocate. torch is only the fallback for machines where
-    nvidia-smi isn't on PATH but CUDA works.
+    Asks ``nvidia-smi`` first and NVML directly (core.device.nvml_gpus) when
+    nvidia-smi is not on PATH. Neither creates a CUDA context: the torch
+    fallback this replaced (``torch.cuda.mem_get_info``) initialized one in
+    the caller (~300 MB) purely to ask how much VRAM is free, which on a tight
+    card eats the very headroom the answer is used to allocate, and imported
+    torch to do it. nvidia-smi stays first so the figure the pool is sized by
+    is unchanged; it reads the same NVML field (2026-11-15, RTX 4070 Ti SUPER,
+    driver 621.14: both 9908 MiB free).
     """
     try:
         result = subprocess.run(
@@ -362,11 +365,12 @@ def available_vram_gb():
         pass
 
     try:
-        import torch
+        from core.device import nvml_gpus
 
-        if torch.cuda.is_available():
-            free_bytes, _total = torch.cuda.mem_get_info()
-            return free_bytes / (1024 ** 3)
+        gpus = nvml_gpus()
+        if gpus:
+            # Row 0, like nvidia-smi above: NVML's order is nvidia-smi's.
+            return gpus[0]["free_bytes"] / (1024 ** 3)
     except Exception:
         pass
     return None

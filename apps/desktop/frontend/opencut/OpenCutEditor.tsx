@@ -39,7 +39,8 @@ import { InsertElementCommand } from "@opencut/commands/timeline";
 import { BatchCommand } from "@opencut/commands";
 import { DEFAULT_NEW_ELEMENT_DURATION } from "@opencut/timeline/creation";
 import { mediaTimeFromSeconds, TICKS_PER_SECOND } from "@opencut/wasm";
-import { RecallHostContext, type RecallEditorHost } from "@opencut/recall/host";
+import { RecallHostContext, useRecallHost, type RecallEditorHost } from "@opencut/recall/host";
+import { SourcePanel } from "@opencut/recall/source-view";
 import { applyFraming } from "@opencut/recall/framing";
 import { syncFades } from "@opencut/recall/clip-panel";
 import { applyCaptionTrack, coversWindow, readCaptions, storeCaptionWords } from "@opencut/recall/caption-track";
@@ -608,6 +609,7 @@ function EditorLayout() {
       }),
     [activeGuide, activeScene, currentTime, showBookmarkNotes],
   );
+  const splitPreview = Boolean(useRecallHost().sourceView);
   const overlayControls = useMemo(
     () => overlaySource.definitions.map((overlay) => createPreviewOverlayControl({ overlay, overlays })),
     [overlaySource.definitions, overlays],
@@ -637,11 +639,26 @@ function EditorLayout() {
           </ResizablePanel>
           <ResizableHandle withHandle />
           <ResizablePanel defaultSize={panels.preview} minSize={30} className="min-h-0 min-w-0 flex-1">
-            <PreviewPanel
-              overlayControls={overlayControls}
-              overlayInstances={overlaySource.instances}
-              onOverlayVisibilityChange={setOverlayVisibility}
-            />
+            {splitPreview ? (
+              // Recall: the whole frame to work on, the 9:16 clip beside it.
+              <div className="flex size-full min-h-0 min-w-0 gap-[0.19rem]">
+                <div className="min-h-0 min-w-0 flex-1"><SourcePanel /></div>
+                <div className="recall-clip-pane min-h-0">
+                  <PreviewPanel
+                    compact
+                    overlayControls={overlayControls}
+                    overlayInstances={overlaySource.instances}
+                    onOverlayVisibilityChange={setOverlayVisibility}
+                  />
+                </div>
+              </div>
+            ) : (
+              <PreviewPanel
+                overlayControls={overlayControls}
+                overlayInstances={overlaySource.instances}
+                onOverlayVisibilityChange={setOverlayVisibility}
+              />
+            )}
           </ResizablePanel>
           <ResizableHandle withHandle />
           <ResizablePanel defaultSize={panels.properties} minSize={15} maxSize={40} className="min-w-0">

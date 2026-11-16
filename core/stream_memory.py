@@ -2129,7 +2129,7 @@ class StreamMemoryService:
 
     @staticmethod
     def _cache_labels() -> list[str]:
-        from engines.caption.whisper_asr import asr_cache_label
+        from engines.caption.asr import asr_cache_label
 
         # One backend, one label. The whisper compatibility labels went with
         # the whisper backend on 2026-09-01: nothing on disk carried them, and

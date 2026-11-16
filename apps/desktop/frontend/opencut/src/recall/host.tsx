@@ -127,6 +127,47 @@ export interface RecallOpenClip {
 	captionWords?: RecallCaptionWord[];
 }
 
+/**
+ * The full-frame pane beside the 9:16 preview (source-view.tsx): the whole
+ * 16:9 frame with the regions the clip is cut from. Boxes are normalized
+ * [x, y, w, h] on the source frame.
+ */
+export interface RecallSourceViewHost {
+	/** The facecam box the clip's layout uses (drawn, or found by Recall), if any. */
+	camBox: [number, number, number, number] | null;
+	/** Move, resize or draw the facecam box. */
+	onCamBox: (box: [number, number, number, number]) => void;
+	/** Slide the clip's game window sideways: focus_x, 0 = left edge, 1 = right edge. */
+	onClipFocus?: (focusX: number) => void;
+	/**
+	 * Gameplay layout: there's no facecam, the whole frame slides the window,
+	 * and it's framed without the engine, so it follows the drag live.
+	 * Otherwise a slide is sent once, on release.
+	 */
+	gameplayOnly?: boolean;
+	/** One line under the frame (what dragging does here). */
+	hint?: string;
+	/** What the box is called on the frame ("Facecam", or "Avatar" for a VTuber cutout). */
+	camLabel?: string;
+}
+
+/**
+ * A VTuber cutout on the 9:16 clip. The editor can't key an alpha mask, so the
+ * preview draws the avatar itself (cutout-overlay.tsx) the way the render
+ * does: the source box, through the mask, faded at the bottom, on `target`.
+ */
+export interface RecallCutoutHost {
+	/** Normalized [x, y, w, h] on the source frame. */
+	source: [number, number, number, number];
+	/** Canvas px on the clip (1080x1920). */
+	target: [number, number, number, number];
+	/** Share of the avatar's height that fades out at the bottom. */
+	lowerFade: number;
+	/** Changes when the mask does. */
+	maskKey: string;
+	loadMask: () => Promise<ImageBitmap>;
+}
+
 export interface RecallEditorHost {
 	captions?: RecallCaptionsHost;
 	captionTrack?: RecallCaptionTrackHost;
@@ -139,6 +180,10 @@ export interface RecallEditorHost {
 	 * normalized coordinates in it are coordinates on the canvas.
 	 */
 	previewOverlay?: ReactNode;
+	/** Show the full frame beside the 9:16 preview (the Cutting Room). */
+	sourceView?: RecallSourceViewHost;
+	/** The avatar cutout the 9:16 preview draws over the clip. */
+	cutout?: RecallCutoutHost;
 }
 
 export const RecallHostContext = createContext<RecallEditorHost>({});

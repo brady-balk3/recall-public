@@ -16,6 +16,7 @@ import { Poster, SessionPoster } from "../components/Posters";
 import { describeScanFailure, describeScanHealth } from "../lib/copy";
 import { fmtClock, fmtDurationHuman } from "../lib/format";
 import { AlertTriangle, Check, ChevronRight, Plus, Queue, X } from "../lib/icons";
+import { useNow } from "../lib/polling";
 import { primaryReviewDeckClips } from "../lib/reviewDeck";
 import { undecidedClips } from "../home/homeModel";
 import { fetchReactionTimeline, type Job, type ReactionTimeline, type Session } from "../lib/store";
@@ -62,7 +63,6 @@ function relativeAgo(ms: number) {
 export function ScansView({ jobIds, jobs, sessions, onOpenSession, onOpenProcessing, onCancelJob, onDone, onClearQueue, onNew, rates = null }: ScansViewProps) {
   const [selectedId, setSelectedId] = useState<string>();
   const [cancellingId, setCancellingId] = useState<string>();
-  const [clock, setClock] = useState(() => Date.now());
 
   const rows: Row[] = useMemo(() => {
     const ids = jobIds.length ? jobIds : sessions.filter((s) => ACTIVE.includes(s.status)).map((s) => s.id);
@@ -91,11 +91,8 @@ export function ScansView({ jobIds, jobs, sessions, onOpenSession, onOpenProcess
   }, [live, rows, selectedId]);
 
   const running = rows.some((r) => r.lane === "running");
-  useEffect(() => {
-    if (!running) return;
-    const timer = window.setInterval(() => setClock(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [running]);
+  // The shared 1s clock: it holds while this page is behind another one.
+  const clock = useNow(running);
 
   const selected = rows.find((r) => r.id === selectedId) ?? rows[0];
 

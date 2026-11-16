@@ -28,7 +28,8 @@ paddleocr==3.7.0
 # Facecam emotion: HSEmotion ONNX (EfficientNet-B0) via onnxruntime — GPU when
 # CUDA EP is available, CPU otherwise. Face detection uses the Haar cascade
 # bundled with opencv-contrib-python.
-# onnxruntime-gpu ≤1.26.x (CUDA 12) matches torch+cu126; 1.27+ wants CUDA 13.
+# onnxruntime-gpu ≤1.26.x (CUDA 12) matches the CUDA 12.6 wheels below; 1.27+
+# wants CUDA 13.
 # OCR tries GPU when the EP works and falls back to CPU (RECALL_OCR_GPU=0 forces
 # CPU). See core/device.py preload/probe notes in the GPU section below.
 onnxruntime-gpu==1.26.0
@@ -52,15 +53,35 @@ scipy==1.18.0
 # with the fallback backend on 2026-09-01, taking ~1.6 GB of bundled weights
 # with it.
 #
-# openai-whisper STAYS, and not as a model: engines/caption/qwen_aligner.py
-# imports whisper.audio.log_mel_spectrogram for the forced aligner's mel
-# transform. No whisper CHECKPOINT is bundled any more -- this is a DSP
-# dependency, and dropping the package breaks the aligner, which is what
-# produces every word timing.
-openai-whisper==20250625
-# Keep the default CPU install on the same Torch release as the reviewed build.
-# This also accepts the matching +cu126 build used for optional GPU acceleration.
-torch==2.12.1
+# openai-whisper went too (2026-11): the forced aligner only ever used its
+# log-mel transform, which engines/caption/qwen_aligner.py now computes with
+# numpy/scipy, with the filterbank generated in code rather than read from
+# whisper's assets. Word timings came out identical on the comparison clips.
+# A dev venv may keep it installed: tests/unit/test_qwen_aligner_mel.py uses
+# it as the reference when it is importable and skips otherwise.
+# torch is no longer an engine dependency (2026-11-15): nothing in the engine
+# imports it (tests/unit/test_no_torch_imports.py) and the packaged engine does
+# not bundle it. It moved to requirements-dev.txt for the training/eval and
+# research scripts and the tests' reference implementations.
+#
+# CUDA 12.6 / cuDNN 9.10 runtime for onnxruntime's CUDA EP and llama.cpp,
+# from NVIDIA's own wheels. They used to come from torch+cu126's torch/lib;
+# these exact versions ship DLLs byte-identical to that copy (sha256 of all 17
+# overlapping DLLs, 2026-11-15), i.e. CUDA 12.6 Update 3 components. Nothing
+# imports them as Python packages: core/device.py loads the DLLs from
+# nvidia/<lib>/bin by path, and recall-engine.spec copies the set into the
+# bundle's nvidia-cuda folder. Bump only together with a GPU scan, and keep
+# them on CUDA 12 while onnxruntime-gpu is pinned to a CUDA 12 build.
+nvidia-cuda-runtime-cu12==12.6.77
+nvidia-cublas-cu12==12.6.4.1
+nvidia-cufft-cu12==11.3.0.4
+nvidia-cuda-nvrtc-cu12==12.6.85
+nvidia-cudnn-cu12==9.10.2.21
+# Declared by nvidia-cufft-cu12's metadata, so pip installs it with the above.
+# Nothing here loads it (cufft64_11.dll does not import it; only cuFFT's LTO
+# JIT callbacks would) and recall-engine.spec does not bundle it. Pinned so a
+# fresh install resolves the CUDA 12.6 Update 3 release instead of the latest.
+nvidia-nvjitlink-cu12==12.6.85
 # Qwen3-ASR's cheap chunking pass. The package carries the Silero VAD ONNX
 # graph that PyInstaller collects into the portable engine.
 onnx-asr==0.12.0
@@ -81,10 +102,10 @@ huggingface_hub==1.22.0
 # ordinary version requirement. The default wheel is CPU-only, which ran the semantic AND visual
 # judges ~10x slower than believed (measured 2026-07-19: ~48s -> ~5s per visual
 # verdict after the fix). The reliable GPU recipe is the PREBUILT cu124 wheel
-# (no local CMake build) plus colocating torch's CUDA runtime DLLs beside
-# llama.dll — automated and verified by:
+# (no local CMake build); its CUDA runtime DLLs are found in the
+# nvidia-*-cu12 wheels above by core.device.prepare_llama_cuda(). Installed and verified by:
 #     venv\Scripts\python.exe scripts\setup_gpu_llama.py
-# Re-run it after any llama-cpp-python reinstall (the DLL copies are wiped).
+# Re-run it after any llama-cpp-python reinstall.
 # Every scan logs the state as llama_gpu=True/False in the device summary.
 llama-cpp-python @ https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.34/llama_cpp_python-0.3.34-py3-none-win_amd64.whl#sha256=6526fff614e5ef7e439e6369e076a78073e45e1d791dbe1d5e5d42661f46ca1a ; sys_platform == "win32" and platform_machine == "AMD64"
 llama-cpp-python==0.3.34 ; sys_platform != "win32" or platform_machine != "AMD64"
@@ -94,17 +115,20 @@ llama-cpp-python==0.3.34 ; sys_platform != "win32" or platform_machine != "AMD64
 # authoritative game + GAME_CHANGE timeline used for game detection.
 
 # --- Optional NVIDIA GPU acceleration (handbook/20) ---
-# CPU is the default and works everywhere. For an NVIDIA GPU, install the CUDA
-# build of torch + torchvision (MUST match versions):
-#   pip install torch==2.12.1+cu126 torchvision==0.27.1+cu126 --index-url https://download.pytorch.org/whl/cu126
-# core/device.py auto-detects CUDA and routes the ASR to it (CPU fallback).
-# Person detection runs on onnxruntime's providers, not torch -- see
-# core/device.py get_ort_providers() and engines/vision/person_onnx.py.
+# CPU is the default and works everywhere. The CUDA/cuDNN DLLs come from the
+# nvidia-*-cu12 wheels pinned above; torch is not needed for the GPU path
+# (2026-11-15). A dev venv may keep torch+cu126 for the research scripts, and
+# core/device.py still falls back to its torch/lib if the wheels are absent.
+# core/device.py detects the GPU with NVML (nvml.dll, part of the NVIDIA
+# driver; no torch) and confirms onnxruntime's CUDA EP works before routing
+# llama.cpp, OCR, person detection and the aligner to it (CPU fallback).
+# RECALL_CUDA_DLL_PROVIDER=nvidia-wheels pins the DLL source for a check.
 #
 # onnxruntime-gpu is the default ORT build (OCR, HSEmotion). Pin to ≤1.26.x
-# (CUDA 12) to match torch+cu126 — 1.27+ ships for CUDA 13.
-# core/device.py preloads torch's CUDA/cuDNN via ort.preload_dlls() and probes
-# the CUDA EP before advertising it. OCR tries GPU when the EP works and falls
+# (CUDA 12) to match the CUDA 12.6 wheels — 1.27+ ships for CUDA 13.
+# core/device.py preloads the CUDA/cuDNN DLLs from the wheels' bin folders by
+# path via ort.preload_dlls() and probes the CUDA EP before advertising
+# it. OCR tries GPU when the EP works and falls
 # back to CPU on init failure. Force CPU OCR with RECALL_OCR_GPU=0.
 # Safe non-device OCR speed-ups still live in engines/ocr/ocr.py:
 #   - RECALL_OCR_MAX_SIDE (default 1280): downscale the OCR input frame
