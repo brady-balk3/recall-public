@@ -395,13 +395,6 @@
       "bytes": 611
     },
     {
-      "distribution": "networkx",
-      "version": "3.6.1",
-      "path": "networkx/networkx-3.6.1.dist-info/licenses/LICENSE.txt",
-      "sha256": "3cf7c3a179d817b23b8b8568211769fefdf93797d207d984b8b2fa24d0220b33",
-      "bytes": 1763
-    },
-    {
       "distribution": "numba",
       "version": "0.66.0",
       "path": "numba/numba-0.66.0.dist-info/licenses/LICENSE",
@@ -477,13 +470,6 @@
       "path": "onnxruntime-gpu/onnxruntime/ThirdPartyNotices.txt",
       "sha256": "fb0af774b4d7cffc5b9d046f2aaeade2f37df2f80abf8033c95dfffcc77a8866",
       "bytes": 331175
-    },
-    {
-      "distribution": "openai-whisper",
-      "version": "20250625",
-      "path": "openai-whisper/openai_whisper-20250625.dist-info/licenses/LICENSE",
-      "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
-      "bytes": 1063
     },
     {
       "distribution": "opencv-contrib-python",
@@ -1319,27 +1305,6 @@
       "bytes": 1099
     },
     {
-      "distribution": "torch",
-      "version": "2.12.1+cu126",
-      "path": "torch/torch-2.12.1+cu126.dist-info/LICENSE",
-      "sha256": "42ab13e914edeaca7bafd1e558a05c443448c6818745176526791836dd4af517",
-      "bytes": 413563
-    },
-    {
-      "distribution": "torch",
-      "version": "2.12.1+cu126",
-      "path": "torch/torch-2.12.1+cu126.dist-info/NOTICE",
-      "sha256": "1c3dec6c0342c7ed9e12af59b296c7bb1d394af5cf881db74191cc8299efce5c",
-      "bytes": 24088
-    },
-    {
-      "distribution": "torchvision",
-      "version": "0.27.1+cu126",
-      "path": "torchvision/torchvision-0.27.1+cu126.dist-info/LICENSE",
-      "sha256": "c06363f9d33627dc5173b13522444cc85fbb4739f63e16d4587d5c0a165b5b1e",
-      "bytes": 1546
-    },
-    {
       "distribution": "typing-inspection",
       "version": "0.4.2",
       "path": "typing-inspection/typing_inspection-0.4.2.dist-info/licenses/LICENSE",
@@ -1607,21 +1572,6 @@
       "sha256": "ad6f5853fba0ca0d159d0f58d49ae49830c2f8c93f7a92648b9ce90adb4c6ccd",
       "bytes": 59262,
       "origin": "Official NVIDIA wheel; nvrtc-official-wheel-verification.json"
-    },
-    {
-      "path": "native/NVIDIA-cuSOLVER/LICENSE.txt",
-      "distribution": "NVIDIA-cuSOLVER",
-      "version": "11.7.1.2",
-      "sha256": "ad6f5853fba0ca0d159d0f58d49ae49830c2f8c93f7a92648b9ce90adb4c6ccd",
-      "bytes": 59262,
-      "origin": "Official NVIDIA wheel; cusolver-official-wheel-verification.json"
-    },
-    {
-      "distribution": "NVIDIA-CUPTI",
-      "version": "12.6.80",
-      "path": "native/NVIDIA-CUPTI/LICENSE.txt",
-      "sha256": "ad6f5853fba0ca0d159d0f58d49ae49830c2f8c93f7a92648b9ce90adb4c6ccd",
-      "bytes": 59262
     },
     {
       "path": "native/Python-libffi/LICENSE.txt",
